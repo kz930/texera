@@ -19,7 +19,7 @@
 
 package org.apache.texera.amber.storage.result.iceberg
 
-import org.apache.texera.amber.config.StorageConfig
+import org.apache.texera.common.config.StorageConfig
 import org.apache.texera.amber.core.state.State
 import org.apache.texera.amber.core.storage.model.{VirtualDocument, VirtualDocumentSpec}
 import org.apache.texera.amber.core.storage.{DocumentFactory, IcebergCatalogInstance, VFSURIFactory}
@@ -280,6 +280,27 @@ class IcebergDocumentSpec extends VirtualDocumentSpec[Tuple] with BeforeAndAfter
         .values("nested")
         .asInstanceOf[Map[String, Any]]("values") == List(3L, 4L)
     )
+  }
+
+  it should "expose written rows as a non-empty ZIP via asInputStream" in {
+    val items = generateSampleItems().take(3)
+    val writer = document.writer(UUID.randomUUID().toString)
+    writer.open()
+    items.foreach(writer.putOne)
+    writer.close()
+
+    val stream = document.asInputStream()
+    try {
+      val bytes = stream.readAllBytes()
+      assert(bytes.nonEmpty, "asInputStream should yield non-empty bytes after writes")
+      // ZIP local-file-header magic bytes: 0x50 0x4B 0x03 0x04 ("PK\x03\x04").
+      assert(
+        bytes(0) == 0x50.toByte && bytes(1) == 0x4b.toByte,
+        "expected ZIP magic bytes at the start of the stream"
+      )
+    } finally {
+      stream.close()
+    }
   }
 
   /** Returns a dynamic proxy for `realTable` that increments `counter` on every `refresh()` call. */

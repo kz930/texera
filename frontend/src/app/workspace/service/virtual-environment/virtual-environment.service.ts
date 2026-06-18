@@ -31,9 +31,31 @@ export interface PvePackageResponse {
   userPackages: string[];
 }
 
+export interface UserPveRecord {
+  veid: number;
+  name: string;
+  packages: Record<string, string>;
+}
+
 @Injectable({ providedIn: "root" })
 export class WorkflowPveService {
   constructor(private http: HttpClient) {}
+
+  savePve(name: string, packages: Record<string, string>): Observable<{ veid: number }> {
+    return this.http.post<{ veid: number }>("/pve/db", { name, packages });
+  }
+
+  updateUserPve(veid: number, name: string, packages: Record<string, string>): Observable<{ veid: number }> {
+    return this.http.put<{ veid: number }>(`/pve/db/${veid}`, { name, packages });
+  }
+
+  listUserPves(): Observable<UserPveRecord[]> {
+    return this.http.get<UserPveRecord[]>("/pve/db");
+  }
+
+  deleteUserPve(veid: number): Observable<void> {
+    return this.http.delete<void>(`/pve/db/${veid}`);
+  }
 
   getAccessToken(): string | null {
     const token = AuthService.getAccessToken();
@@ -49,8 +71,8 @@ export class WorkflowPveService {
     return params;
   }
 
-  getSystemPackages(isLocal: boolean): Observable<PackageResponse> {
-    const params = this.buildBaseParams();
+  getSystemPackages(cuid: number): Observable<PackageResponse> {
+    const params = this.buildBaseParams().set("cuid", cuid.toString());
     return this.http.get<PackageResponse>("/pve/system", { params });
   }
 
@@ -67,8 +89,8 @@ export class WorkflowPveService {
     return this.http.delete(`/pve/pves/${cuid}`);
   }
 
-  deletePackage(cuid: number, pveName: string, packageName: string, isLocal: boolean) {
-    const params = this.buildBaseParams().set("isLocal", isLocal.toString());
+  deletePackage(cuid: number, pveName: string, packageName: string) {
+    const params = this.buildBaseParams();
 
     return this.http.delete<string[]>(
       `/pve/${cuid}/${encodeURIComponent(pveName)}/packages/${encodeURIComponent(packageName)}`,
@@ -76,7 +98,7 @@ export class WorkflowPveService {
     );
   }
 
-  getPveWebSocketUrl(cuid: number, pveName: string, isLocal: boolean, action: string, packages: string[] = []): string {
+  getPveWebSocketUrl(cuid: number, pveName: string, action: string, packages: string[] = []): string {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const query = encodeURIComponent(JSON.stringify(packages));
 
@@ -88,7 +110,6 @@ export class WorkflowPveService {
       `?packages=${query}` +
       `&cuid=${cuid}` +
       `&pveName=${encodeURIComponent(pveName)}` +
-      `&isLocal=${isLocal}` +
       `&action=${action}` +
       tokenParam
     );
