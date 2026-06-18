@@ -17,6 +17,7 @@
 
 # Posts (or upserts) a PR comment with bench results AFTER the Benchmarks
 # workflow completes.
+# Fork-only test PRs may touch this comment to exercise the workflow_run path.
 #
 # Why a separate workflow_run-triggered file:
 #   - The Benchmarks workflow runs on `pull_request`, which for fork PRs
