@@ -28,7 +28,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
@@ -52,7 +53,7 @@ import javax.validation.constraints.NotNull
   }
 }
 """)
-class BubbleChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class BubbleChartOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(value = "xValue", required = true)
   @JsonSchemaTitle("X-Column")
@@ -194,12 +195,14 @@ class BubbleChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeGene
        |if in1df.empty:
        |    fail("Input table is empty.")
        |else:
-       |    in1df.dropna(subset=[$xLit, $yLit, $zLit], inplace=True)
-       |    if in1df.empty:
+       |    # Bound to a name of its own: the same frame can feed another branch
+       |    # of the plan, which must still see every row.
+       |    chart_df = in1df.dropna(subset=[$xLit, $yLit, $zLit])
+       |    if chart_df.empty:
        |        fail("No valid rows left (every row has at least 1 missing value).")
        |    else:
        |        fig = go.Figure(px.scatter(
-       |            in1df,
+       |            chart_df,
        |            x=$xLit,
        |            y=$yLit,
        |            size=$zLit,

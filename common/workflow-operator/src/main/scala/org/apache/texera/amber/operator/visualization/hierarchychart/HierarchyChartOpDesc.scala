@@ -28,7 +28,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
@@ -45,7 +46,7 @@ import javax.validation.constraints.{NotEmpty, NotNull}
   }
 }
 """)
-class HierarchyChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class HierarchyChartOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
   @JsonProperty(required = true)
   @JsonSchemaTitle("Chart Type")
   @JsonPropertyDescription("Treemap or Sunburst")
@@ -165,12 +166,15 @@ class HierarchyChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeG
        |if in1df.empty:
        |    fail("input table is empty.")
        |else:
-       |    in1df[$valueLit] = in1df[in1df[$valueLit] > 0][$valueLit]
-       |    in1df.dropna(subset=[$attributes], inplace=True)
-       |    if in1df.empty:
+       |    # On a copy: the same frame can feed another branch of the plan, and
+       |    # both the assignment and the drop below would otherwise reach it.
+       |    chart_df = in1df.copy()
+       |    chart_df[$valueLit] = chart_df[chart_df[$valueLit] > 0][$valueLit]
+       |    chart_df = chart_df.dropna(subset=[$attributes])
+       |    if chart_df.empty:
        |        fail("value column contains only non-positive numbers or nulls.")
        |    else:
-       |        fig = px.${hierarchyChartType.getPlotlyExpressApiName}(in1df, path=[$attributes], values=$valueLit,
+       |        fig = px.${hierarchyChartType.getPlotlyExpressApiName}(chart_df, path=[$attributes], values=$valueLit,
        |                         color=$valueLit, hover_data=[$attributes],
        |                         color_continuous_scale='RdBu')
        |        fig.update_layout(margin=dict(l=0, r=0, b=0, t=0))

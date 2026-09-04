@@ -28,7 +28,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
@@ -45,7 +46,7 @@ import javax.validation.constraints.NotNull
   }
 }
 """)
-class BoxViolinPlotOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class BoxViolinPlotOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(value = "value", required = true)
   @JsonSchemaTitle("Value Column")
@@ -184,20 +185,22 @@ class BoxViolinPlotOpDesc extends PythonOperatorDescriptor with StandaloneCodeGe
        |if in1df.empty:
        |    fail("input table is empty.")
        |else:
-       |    in1df = in1df.dropna(subset=[$valueLit])
-       |    if in1df.empty:
+       |    # Bound to a name of its own: the same frame can feed another branch
+       |    # of the plan, which must still see every row.
+       |    chart_df = in1df.dropna(subset=[$valueLit])
+       |    if chart_df.empty:
        |        fail("value column contains only non-positive numbers or nulls.")
        |    else:
        |        if $violin:
        |            if $horizontal:
-       |                fig = px.violin(in1df, x=$valueLit, box=True, points='all')
+       |                fig = px.violin(chart_df, x=$valueLit, box=True, points='all')
        |            else:
-       |                fig = px.violin(in1df, y=$valueLit, box=True, points='all')
+       |                fig = px.violin(chart_df, y=$valueLit, box=True, points='all')
        |        else:
        |            if $horizontal:
-       |                fig = px.box(in1df, x=$valueLit, boxmode="overlay", points='all')
+       |                fig = px.box(chart_df, x=$valueLit, boxmode="overlay", points='all')
        |            else:
-       |                fig = px.box(in1df, y=$valueLit, boxmode="overlay", points='all')
+       |                fig = px.box(chart_df, y=$valueLit, boxmode="overlay", points='all')
        |        fig.update_traces(quartilemethod=${pyStringLiteral(quartileMethod)}, col=1)
        |        fig.update_layout(margin=dict(t=0, b=0, l=0, r=0))
        |        fig.write_json("output.json")

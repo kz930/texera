@@ -29,7 +29,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.{EncodableString, PythonLiteral}
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
@@ -46,7 +47,7 @@ import javax.validation.constraints.NotNull
   }
 }
 """)
-class ContourPlotOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class ContourPlotOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(value = "x", required = true)
   @JsonSchemaTitle("x")
@@ -179,18 +180,19 @@ class ContourPlotOpDesc extends PythonOperatorDescriptor with StandaloneCodeGene
        |        output.write(render_error(message))
        |
        |# A row missing any of the three has no point to contribute, and griddata
-       |# refuses a NaN coordinate outright.
-       |in1df = in1df.dropna(subset=[${pyStringLiteral(x)}, ${pyStringLiteral(
+       |# refuses a NaN coordinate outright. Bound to a name of its own: the same
+       |# frame can feed another branch of the plan, which must still see every row.
+       |chart_df = in1df.dropna(subset=[${pyStringLiteral(x)}, ${pyStringLiteral(
       y
     )}, ${pyStringLiteral(
       z
     )}])
-       |if in1df.empty:
+       |if chart_df.empty:
        |    _write_error("Table should not have any empty/null values or fields.")
        |else:
-       |    x = in1df[${pyStringLiteral(x)}].values
-       |    y = in1df[${pyStringLiteral(y)}].values
-       |    z = in1df[${pyStringLiteral(z)}].values
+       |    x = chart_df[${pyStringLiteral(x)}].values
+       |    y = chart_df[${pyStringLiteral(y)}].values
+       |    z = chart_df[${pyStringLiteral(z)}].values
        |
        |    # Cubic interpolation triangulates the points before it interpolates, which
        |    # needs them to span a plane. Points that all fall on one line leave Qhull

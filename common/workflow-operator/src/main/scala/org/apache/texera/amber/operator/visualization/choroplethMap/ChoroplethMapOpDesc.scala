@@ -28,7 +28,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.{AutofillAttributeName, SampleColumn}
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
@@ -47,7 +48,7 @@ import javax.validation.constraints.NotNull
   }
 }
 """)
-class ChoroplethMapOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class ChoroplethMapOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(value = "locations", required = true)
   @JsonSchemaTitle("Locations Column")
@@ -156,11 +157,13 @@ class ChoroplethMapOpDesc extends PythonOperatorDescriptor with StandaloneCodeGe
        |if in1df.empty:
        |    fail("Input table is empty.")
        |else:
-       |    in1df = in1df.dropna(subset=[$locationsLit, $colorLit])
-       |    if in1df.empty:
+       |    # Bound to a name of its own: the same frame can feed another branch
+       |    # of the plan, which must still see every row.
+       |    chart_df = in1df.dropna(subset=[$locationsLit, $colorLit])
+       |    if chart_df.empty:
        |        fail("No valid rows left (every row has at least 1 missing value).")
        |    else:
-       |        fig = px.choropleth(in1df, locations=$locationsLit, color=$colorLit, color_continuous_scale=px.colors.sequential.Plasma)
+       |        fig = px.choropleth(chart_df, locations=$locationsLit, color=$colorLit, color_continuous_scale=px.colors.sequential.Plasma)
        |        fig.update_layout(margin={"r":0,"t":0,"l":0,"b":0})
        |        fig.write_json("output.json")
        |        fig.write_html("output.html")

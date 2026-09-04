@@ -27,13 +27,14 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 
 import javax.validation.constraints.NotNull
 
-class Histogram2DOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class Histogram2DOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(required = true)
   @JsonSchemaTitle("X Column")
@@ -141,13 +142,15 @@ class Histogram2DOpDesc extends PythonOperatorDescriptor with StandaloneCodeGene
        |    with open("output.html", "w", encoding="utf-8") as output:
        |        output.write(render_error("Input table is empty."))
        |else:
-       |    in1df.dropna(subset=[$xLit, $yLit], inplace=True)
-       |    if in1df.empty:
+       |    # Bound to a name of its own: the same frame can feed another branch
+       |    # of the plan, which must still see every row.
+       |    chart_df = in1df.dropna(subset=[$xLit, $yLit])
+       |    if chart_df.empty:
        |        with open("output.html", "w", encoding="utf-8") as output:
        |            output.write(render_error("No rows after dropping nulls."))
        |    else:
        |        fig = px.density_heatmap(
-       |            in1df,
+       |            chart_df,
        |            x=$xLit,
        |            y=$yLit,
        |            nbinsx=$xBins,

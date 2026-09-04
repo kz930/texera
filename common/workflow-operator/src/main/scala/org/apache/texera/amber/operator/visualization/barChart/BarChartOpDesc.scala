@@ -28,7 +28,8 @@ import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.{
 }
 import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{PythonOperatorDescriptor, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.PythonOperatorDescriptor
+import org.apache.texera.amber.operator.visualization.PlotlyStandaloneCode
 import org.apache.texera.amber.operator.metadata.annotations.AutofillAttributeName
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder
@@ -45,7 +46,7 @@ import javax.validation.constraints.NotNull
   }
 }
 """)
-class BarChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerator {
+class BarChartOpDesc extends PythonOperatorDescriptor with PlotlyStandaloneCode {
 
   @JsonProperty(value = "value", required = true)
   @JsonSchemaTitle("Value Column")
@@ -198,11 +199,13 @@ class BarChartOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerat
        |    # would raise a KeyError instead of reporting the empty table.
        |    fail("Table should not have any empty/null values or fields.")
        |else:
-       |    in1df = in1df.dropna(subset=[$valueLit, $fieldsLit])
-       |    if in1df.empty:
+       |    # Bound to a name of its own: the same frame can feed another branch
+       |    # of the plan, which must still see every row.
+       |    chart_df = in1df.dropna(subset=[$valueLit, $fieldsLit])
+       |    if chart_df.empty:
        |        fail("Table should not have any empty/null values or fields.")
        |    else:
-       |        fig = go.Figure(px.bar(in1df, $barArgs))
+       |        fig = go.Figure(px.bar(chart_df, $barArgs))
        |        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0))
        |        fig.write_json("output.json")
        |        fig.write_html("output.html")
