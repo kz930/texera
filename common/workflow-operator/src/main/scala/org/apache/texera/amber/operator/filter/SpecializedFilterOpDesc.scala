@@ -75,13 +75,16 @@ class SpecializedFilterOpDesc extends FilterOpDesc with StandaloneCodeGenerator 
       .map(_.getAttributes.map(a => a.getName -> a.getType).toMap)
       .getOrElse(Map.empty)
     val conditions = predicates.map { p =>
-      val colLit = pyStringLiteral(p.attribute)
+      // FilterPredicate reads the field through Schema, which ignores case. See
+      // [[columnAsStored]].
+      val column = columnAsStored(p.attribute, inputSchemas.values.headOption)
+      val colLit = pyStringLiteral(column)
       p.condition match {
         case ComparisonType.IS_NULL     => s"""(in1df[$colLit].isna())"""
         case ComparisonType.IS_NOT_NULL => s"""(in1df[$colLit].notna())"""
         case other                      =>
           // Without a schema the column's dtype stands in for its type.
-          val kind = declared.get(p.attribute).map(t => pyStringLiteral(t.name)).getOrElse("None")
+          val kind = declared.get(column).map(t => pyStringLiteral(t.name)).getOrElse("None")
           val opLit = pyStringLiteral(other.getName)
           val valueLit = pyStringLiteral(Option(p.value).getOrElse(""))
           s"_texera_filter_keep(in1df[$colLit], $opLit, $valueLit, $kind)"
