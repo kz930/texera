@@ -17,53 +17,32 @@
  * under the License.
  */
 
-import {
-  ChangeDetectorRef,
-  Component,
-  ElementRef,
-  HostListener,
-  OnDestroy,
-  OnInit,
-  Type,
-  ViewChild,
-} from "@angular/core";
+import { ChangeDetectorRef, Component, HostListener, OnDestroy, OnInit } from "@angular/core";
 import { merge } from "rxjs";
-import { ExecuteWorkflowService } from "../../service/execute-workflow/execute-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
-import { ExecutionState, ExecutionStateInfo } from "../../types/execute-workflow.interface";
-import { ResultTableFrameComponent } from "./result-table-frame/result-table-frame.component";
 import { ConsoleFrameComponent } from "./console-frame/console-frame.component";
-import { WorkflowResultService } from "../../service/workflow-result/workflow-result.service";
 import { PanelResizeService } from "../../service/workflow-result/panel-resize/panel-resize.service";
-import { filter } from "rxjs/operators";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { isPythonUdf } from "../../service/workflow-graph/model/workflow-graph";
-import { WorkflowVersionService } from "../../../dashboard/service/user/workflow-version/workflow-version.service";
-import { ErrorFrameComponent } from "./error-frame/error-frame.component";
-import { WorkflowConsoleService } from "../../service/workflow-console/workflow-console.service";
 import { NzResizeEvent, NzResizableDirective, NzResizeHandlesComponent } from "ng-zorro-antd/resizable";
-import { VisualizationFrameContentComponent } from "../visualization-panel-content/visualization-frame-content.component";
 import { calculateTotalTranslate3d } from "../../../common/util/panel-dock";
 import { isDefined } from "../../../common/util/predicate";
 import { CdkDragEnd, CdkDrag, CdkDragHandle } from "@angular/cdk/drag-drop";
 import { PanelService } from "../../service/panel/panel.service";
-import { WorkflowCompilingService } from "../../service/compile-workflow/workflow-compiling.service";
-import { CompilationState } from "../../types/workflow-compiling.interface";
-import { WorkflowFatalError } from "../../types/workflow-websocket.interface";
 import { NzMenuDirective, NzMenuItemComponent, NzMenuDividerDirective } from "ng-zorro-antd/menu";
-import { NgClass, NgIf, NgFor, NgComponentOutlet, KeyValuePipe } from "@angular/common";
+import { NgClass, NgIf } from "@angular/common";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
 import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
-import { NzTabsComponent, NzTabComponent } from "ng-zorro-antd/tabs";
 
 export const DEFAULT_WIDTH = 800;
 export const DEFAULT_HEIGHT = 500;
 /**
- * ResultPanelComponent is the bottom level area that displays the
- *  execution result of a workflow after the execution finishes.
+ * ResultPanelComponent is the bottom level area that holds the console. An operator's result is
+ * shown beside it on the canvas instead, so this panel shows only what the operators printed and
+ * the errors: every operator's, or the highlighted operator's alone.
  */
 @UntilDestroy()
 @Component({
@@ -84,18 +63,11 @@ export const DEFAULT_HEIGHT = 500;
     NzSpaceCompactItemDirective,
     NzButtonComponent,
     CdkDragHandle,
-    NzTabsComponent,
-    NzTabComponent,
-    NgFor,
-    NgComponentOutlet,
+    ConsoleFrameComponent,
     NzResizeHandlesComponent,
-    KeyValuePipe,
   ],
 })
 export class ResultPanelComponent implements OnInit, OnDestroy {
-  @ViewChild("dynamicComponent")
-  componentOutlets!: ElementRef;
-  frameComponentConfigs: Map<string, { component: Type<any>; componentInputs: {} }> = new Map();
   protected readonly window = window;
   // The docked panel sits this far above the workspace's bottom edge. The return position is
   // computed against the default height, so the two have to be the same number.
@@ -103,27 +75,17 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
   id = -1;
   width = DEFAULT_WIDTH;
   height = DEFAULT_HEIGHT;
-  operatorTitle = "";
   dragPosition = { x: 0, y: 0 };
   returnPosition = { x: 0, y: 0 };
 
-  // the highlighted operator ID for display result table / visualization / breakpoint
-  currentOperatorId?: string | undefined;
-
-  // the operators with a tab along the panel's bottom, in the order they were opened;
-  // currentOperatorId is the tab being shown
-  openOperatorIds: string[] = [];
-
-  previewWorkflowVersion: boolean = false;
+  // the one highlighted operator, whose messages alone the console shows; none shows every operator's
+  currentOperatorId?: string;
+  // a Python UDF takes debugger commands, so its console has an input
+  consoleInputEnabled = false;
 
   constructor(
-    private executeWorkflowService: ExecuteWorkflowService,
     private workflowActionService: WorkflowActionService,
-    private workflowCompilingService: WorkflowCompilingService,
-    private workflowResultService: WorkflowResultService,
-    private workflowVersionService: WorkflowVersionService,
     private changeDetectorRef: ChangeDetectorRef,
-    private workflowConsoleService: WorkflowConsoleService,
     private resizeService: PanelResizeService,
     private panelService: PanelService
   ) {
@@ -139,11 +101,7 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
     const [xOffset, yOffset, _] = calculateTotalTranslate3d(translates);
     this.returnPosition = { x: -xOffset, y: -yOffset };
     this.updateReturnPosition(DEFAULT_HEIGHT, this.height);
-    this.registerAutoRerenderResultPanel();
-    this.registerAutoOpenResultPanel();
-    this.registerResultClearedHandler();
-    this.registerOperatorDeleteHandler();
-    this.handleResultPanelForVersionPreview();
+    this.registerFollowHighlight();
     this.panelService.closePanelStream.pipe(untilDestroyed(this)).subscribe(() => this.closePanel());
     this.panelService.resetPanelStream.pipe(untilDestroyed(this)).subscribe(() => {
       this.resetPanelPosition();
@@ -156,11 +114,9 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
         this.closePanel();
       }
     });
-    // Once, for what is already there. Every re-render above waits for an event -- a state change,
-    // a highlight, a result arriving -- and none of those follows a hand-over between a workflow's
-    // two views: the highlight and the results are kept in root-provided services, so this panel
-    // would come up empty beside an operator that is still shown selected, until the next event.
-    this.rerenderResultPanel();
+    // Once, for what is already there: the highlight is kept in a root-provided service, so after a
+    // hand-over between a workflow's two views an operator can already be shown selected.
+    this.updateShownOperator();
   }
 
   @HostListener("window:beforeunload")
@@ -174,316 +130,25 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
     }
   }
 
-  handleResultPanelForVersionPreview() {
-    this.workflowVersionService
-      .getDisplayParticularVersionStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(displayVersionFlag => {
-        this.previewWorkflowVersion = displayVersionFlag;
-      });
-  }
-
-  registerAutoOpenResultPanel() {
-    this.executeWorkflowService
-      .getExecutionStateStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(event => {
-        const currentlyHighlighted = this.workflowActionService
-          .getJointGraphWrapper()
-          .getCurrentHighlightedOperatorIDs();
-
-        // display panel when execution is completed and highlight an operator with a result
-        // condition must be (Running -> Completed) to prevent cases like
-        //   (Uninitialized -> Completed) (a completed workflow is reloaded)
-        if (event.previous.state === ExecutionState.Running && event.current.state === ExecutionState.Completed) {
-          // The operators the run kept a result for: the ones at the end of the workflow and the
-          // ones whose result is switched on. Few operators are sinks any more, so this is what
-          // the run actually has to show.
-          const resultOperators = this.workflowActionService
-            .getTexeraGraph()
-            .getAllOperators()
-            .filter(op => !op.isDisabled)
-            .map(op => op.operatorID)
-            .filter(operatorId => this.workflowResultService.hasAnyResult(operatorId));
-
-          if (resultOperators.length > 0) {
-            // a finished run opens one tab per result, in place of whatever was open before it
-            this.openOperatorIds = [...resultOperators];
-            if (!(currentlyHighlighted.length == 1 && resultOperators.includes(currentlyHighlighted[0]))) {
-              this.workflowActionService.getJointGraphWrapper().unhighlightOperators(...currentlyHighlighted);
-              this.workflowActionService.getJointGraphWrapper().highlightOperators(resultOperators[0]);
-            }
-          }
-        }
-
-        // display panel and highlight a python UDF operator when workflow starts running
-        if (event.current.state === ExecutionState.Running) {
-          const activePythonUDFOperators = this.workflowActionService
-            .getTexeraGraph()
-            .getAllOperators()
-            .filter(op => isPythonUdf(op))
-            .filter(op => !op.isDisabled)
-            .map(op => op.operatorID);
-
-          if (activePythonUDFOperators.length > 0) {
-            if (!(currentlyHighlighted.length == 1 && activePythonUDFOperators.includes(activePythonUDFOperators[0]))) {
-              this.workflowActionService.getJointGraphWrapper().unhighlightOperators(...currentlyHighlighted);
-              this.workflowActionService.getJointGraphWrapper().highlightOperators(activePythonUDFOperators[0]);
-            }
-          }
-        }
-      });
-  }
-
-  /**
-   * Wipe the panel when results are dropped (e.g. switching computing units): a
-   * still-highlighted operator isn't re-rendered, so its stale frames would linger.
-   */
-  registerResultClearedHandler() {
-    this.workflowResultService
-      .getResultClearedStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(() => {
-        this.clearResultPanel();
-        this.currentOperatorId = undefined;
-        this.openOperatorIds = [];
-        this.operatorTitle = "";
-        this.changeDetectorRef.detectChanges();
-      });
-  }
-
-  /** A deleted operator has no result left to show, so its tab closes with it. */
-  registerOperatorDeleteHandler() {
-    this.workflowActionService
-      .getTexeraGraph()
-      .getOperatorDeleteStream()
-      .pipe(untilDestroyed(this))
-      .subscribe(({ deletedOperatorID }) => {
-        this.closeTab(deletedOperatorID);
-        this.changeDetectorRef.detectChanges();
-      });
-  }
-
-  registerAutoRerenderResultPanel() {
+  registerFollowHighlight() {
     merge(
-      this.executeWorkflowService
-        .getExecutionStateStream()
-        .pipe(filter(event => ResultPanelComponent.needRerenderOnStateChange(event))),
-      this.workflowCompilingService.getCompilationStateInfoChangedStream(),
       this.workflowActionService.getJointGraphWrapper().getJointOperatorHighlightStream(),
-      this.workflowActionService.getJointGraphWrapper().getJointOperatorUnhighlightStream(),
-      this.workflowResultService.getResultInitiateStream()
+      this.workflowActionService.getJointGraphWrapper().getJointOperatorUnhighlightStream()
     )
       .pipe(untilDestroyed(this))
       .subscribe(_ => {
-        this.rerenderResultPanel();
+        this.updateShownOperator();
         this.changeDetectorRef.detectChanges();
-        this.registerOperatorDisplayNameChangeHandler();
       });
   }
 
-  rerenderResultPanel(): void {
-    // if the workflow on the paper is a version preview then this is a temporary workaround until a future PR
-    // TODO: let the results be tied with an execution ID instead of a workflow ID
-    if (this.previewWorkflowVersion) {
-      return;
-    }
-    // update highlighted operator
-    const highlightedOperators = this.workflowActionService.getJointGraphWrapper().getCurrentHighlightedOperatorIDs();
-    const currentHighlightedOperator = highlightedOperators.length === 1 ? highlightedOperators[0] : undefined;
-
-    // One highlighted operator opens its tab, or switches to it, as long as there is something to
-    // show for it. None, several, or one with nothing to show leaves the tabs and the one shown as
-    // they are, so the panel never turns into a tab with nothing in it.
-    if (
-      isDefined(currentHighlightedOperator) &&
-      this.currentOperatorId !== currentHighlightedOperator &&
-      (this.openOperatorIds.includes(currentHighlightedOperator) || this.hasSomethingToShow(currentHighlightedOperator))
-    ) {
-      // clear everything, prepare for state change
-      this.clearResultPanel();
-      this.currentOperatorId = currentHighlightedOperator;
-      if (!this.openOperatorIds.includes(currentHighlightedOperator)) {
-        this.openOperatorIds = [...this.openOperatorIds, currentHighlightedOperator];
-      }
-    }
-
-    if (
-      this.executeWorkflowService.getExecutionState().state === ExecutionState.Failed ||
-      this.workflowCompilingService.getWorkflowCompilationState() === CompilationState.Failed
-    ) {
-      if (this.currentOperatorId == null) {
-        this.displayError(this.currentOperatorId);
-      } else {
-        const errorMessages = this.getWorkflowFatalErrors(this.currentOperatorId);
-        if (errorMessages.length > 0) {
-          this.displayError(this.currentOperatorId);
-        } else {
-          this.frameComponentConfigs.delete("Static Error");
-        }
-      }
-    } else {
-      this.frameComponentConfigs.delete("Static Error");
-    }
-
-    if (this.currentOperatorId) {
-      this.displayResult(this.currentOperatorId);
-      const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
-      if (this.workflowConsoleService.hasConsoleMessages(this.currentOperatorId) || isPythonUdf(operator)) {
-        this.displayConsole(this.currentOperatorId, isPythonUdf(operator));
-      }
-    }
-  }
-
-  clearResultPanel(): void {
-    this.frameComponentConfigs.clear();
-  }
-
-  /** Show an open tab. The panel follows the highlight, so this highlights the tab's operator. */
-  selectTab(operatorId: string): void {
-    const wrapper = this.workflowActionService.getJointGraphWrapper();
-    const highlighted = wrapper.getCurrentHighlightedOperatorIDs();
-    if (!(highlighted.length === 1 && highlighted[0] === operatorId)) {
-      wrapper.unhighlightOperators(...highlighted);
-      wrapper.highlightOperators(operatorId);
-    }
-    this.rerenderResultPanel();
-  }
-
-  /** Close a tab. Closing the one shown moves to its neighbour, or leaves the panel empty. */
-  closeTab(operatorId: string): void {
-    const index = this.openOperatorIds.indexOf(operatorId);
-    if (index === -1) return;
-    this.openOperatorIds = this.openOperatorIds.filter(id => id !== operatorId);
-    if (operatorId !== this.currentOperatorId) return;
-
-    this.clearResultPanel();
-    this.currentOperatorId = undefined;
-    this.operatorTitle = "";
-    const next = this.openOperatorIds[Math.min(index, this.openOperatorIds.length - 1)];
-    if (isDefined(next)) {
-      this.selectTab(next);
-      return;
-    }
-    // Still highlighted, the closed operator would open its tab again on the next re-render.
-    const wrapper = this.workflowActionService.getJointGraphWrapper();
-    if (wrapper.getCurrentHighlightedOperatorIDs().includes(operatorId)) {
-      wrapper.unhighlightOperators(operatorId);
-    }
-  }
-
-  tabLabel(operatorId: string): string {
+  /** One highlighted operator narrows the console to it. None, or several, shows every operator. */
+  updateShownOperator(): void {
+    const highlighted = this.workflowActionService.getJointGraphWrapper().getCurrentHighlightedOperatorIDs();
     const graph = this.workflowActionService.getTexeraGraph();
-    if (!graph.hasOperator(operatorId)) return operatorId;
-    const operator = graph.getOperator(operatorId);
-    return operator.customDisplayName ?? operator.operatorType;
-  }
-
-  /**
-   * Whether the operator failed. A bad tuple does not fail the run: its worker pauses and writes
-   * an ERROR to the operator's console, and the run stays running. So the console counts too,
-   * not only the fatal and compilation errors.
-   */
-  hasError(operatorId: string): boolean {
-    return (
-      this.getWorkflowFatalErrors(operatorId).length > 0 ||
-      (this.workflowConsoleService.getConsoleMessages(operatorId) ?? []).some(
-        message => message.msgType.name === "ERROR"
-      )
-    );
-  }
-
-  /**
-   * Whether a tab for the operator would have anything in it: a result the run kept, an error,
-   * console output, or, for a Python UDF, the console it takes input from. A run keeps a result
-   * only for some operators, so clicking any other one opens no tab.
-   */
-  hasSomethingToShow(operatorId: string): boolean {
-    const graph = this.workflowActionService.getTexeraGraph();
-    return (
-      this.workflowResultService.hasAnyResult(operatorId) ||
-      this.hasError(operatorId) ||
-      this.workflowConsoleService.hasConsoleMessages(operatorId) ||
-      (graph.hasOperator(operatorId) && isPythonUdf(graph.getOperator(operatorId)))
-    );
-  }
-
-  displayConsole(operatorId: string, consoleInputEnabled: boolean) {
-    this.frameComponentConfigs.set("Console", {
-      component: ConsoleFrameComponent,
-      componentInputs: { operatorId, consoleInputEnabled },
-    });
-  }
-
-  displayError(operatorId: string | undefined) {
-    this.frameComponentConfigs.set("Static Error", {
-      component: ErrorFrameComponent,
-      componentInputs: { operatorId },
-    });
-  }
-
-  displayResult(operatorId: string) {
-    const resultService = this.workflowResultService.getResultService(operatorId);
-    const paginatedResultService = this.workflowResultService.getPaginatedResultService(operatorId);
-    if (paginatedResultService) {
-      // display table result if it has paginated results
-      this.frameComponentConfigs.set("Result", {
-        component: ResultTableFrameComponent,
-        componentInputs: { operatorId },
-      });
-    } else if (resultService) {
-      // display visualization result
-      this.frameComponentConfigs.set("Result", {
-        component: VisualizationFrameContentComponent,
-        componentInputs: { operatorId },
-      });
-    }
-  }
-
-  private getWorkflowFatalErrors(operatorId?: string): readonly WorkflowFatalError[] {
-    // first fetch the error messages from the execution state store
-    let errorMessages = this.executeWorkflowService.getErrorMessages();
-    // then fetch error from the compilation state store
-    errorMessages = errorMessages.concat(Object.values(this.workflowCompilingService.getWorkflowCompilationErrors()));
-    // finally, if any operatorId is given, filter out those with matched Id
-    if (operatorId) {
-      errorMessages = errorMessages.filter(err => err.operatorId === operatorId);
-    }
-    return errorMessages;
-  }
-
-  private registerOperatorDisplayNameChangeHandler(): void {
-    if (this.currentOperatorId) {
-      const operator = this.workflowActionService.getTexeraGraph().getOperator(this.currentOperatorId);
-      this.operatorTitle = operator.customDisplayName ?? "";
-      this.workflowActionService
-        .getTexeraGraph()
-        .getOperatorDisplayNameChangedStream()
-        .pipe(untilDestroyed(this))
-        .subscribe(({ operatorID, newDisplayName }) => {
-          if (operatorID === this.currentOperatorId) {
-            this.operatorTitle = newDisplayName;
-          }
-        });
-    }
-  }
-
-  private static needRerenderOnStateChange(event: {
-    previous: ExecutionStateInfo;
-    current: ExecutionStateInfo;
-  }): boolean {
-    // transitioning from any state to failed state
-    if (event.current.state === ExecutionState.Failed) {
-      return true;
-    }
-
-    // force refresh after fixing all editing-time errors
-    if (event.previous.state === ExecutionState.Failed) {
-      return true;
-    }
-
-    // transition from uninitialized / completed to anything else indicates a new execution of the workflow
-    return event.previous.state === ExecutionState.Uninitialized || event.previous.state === ExecutionState.Completed;
+    this.currentOperatorId = highlighted.length === 1 && graph.hasOperator(highlighted[0]) ? highlighted[0] : undefined;
+    this.consoleInputEnabled =
+      isDefined(this.currentOperatorId) && isPythonUdf(graph.getOperator(this.currentOperatorId));
   }
 
   openPanel() {
@@ -505,23 +170,12 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
     return this.returnPosition.x === this.dragPosition.x && this.returnPosition.y === this.dragPosition.y;
   }
 
-  handleStartDrag() {
-    let visualizationResult = this.componentOutlets.nativeElement.querySelector("#html-content");
-    if (visualizationResult !== null) {
-      visualizationResult.style.zIndex = -1;
-    }
-  }
-
   handleEndDrag({ source }: CdkDragEnd) {
     /**
      * records the most recent panel location, updating dragPosition when dragging is over
      */
     const { x, y } = source.getFreeDragPosition();
     this.dragPosition = { x: x, y: y };
-    let visualizationResult = this.componentOutlets.nativeElement.querySelector("#html-content");
-    if (visualizationResult !== null) {
-      visualizationResult.style.zIndex = 0;
-    }
   }
 
   onResize({ width, height }: NzResizeEvent) {

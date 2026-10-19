@@ -26,7 +26,7 @@
       nz-menu-item
       (click)="closePanel()"
       *ngIf="width"
-      nz-tooltip="Close Result Panel{{operatorTitle ? ': ' + operatorTitle : ''}}">
+      nz-tooltip="Close Console">
       <span
         nz-icon
         nzType="minus"></span>
@@ -38,7 +38,7 @@
       nz-menu-item
       (click)="openPanel()"
       *ngIf="!width"
-      nz-tooltip="Open Result Panel{{operatorTitle ? ': ' + operatorTitle : ''}}">
+      nz-tooltip="Open Console">
       <span
         nz-icon
         nzType="border"></span>
@@ -60,7 +60,6 @@
   [style.height.px]="height"
   (nzResize)="onResize($event)"
   [cdkDragFreeDragPosition]="dragPosition"
-  (cdkDragStarted)="handleStartDrag()"
   (cdkDragEnded)="handleEndDrag($event)">
   <ul
     nz-menu
@@ -90,59 +89,12 @@
     <h4
       id="title"
       cdkDragHandle>
-      Result Panel{{operatorTitle ? ': ' + operatorTitle : ''}}
+      Console
     </h4>
-    <nz-tabs
+    <texera-console-frame
       class="result-content"
-      [nzSize]="'small'"
-      [nzTabPosition]="'left'">
-      <div *ngIf="frameComponentConfigs.size === 0">
-        <nz-tab nzTitle="Result">
-          <div style="text-align: center">
-            <h4>No results available to display.</h4>
-            <p>Tip: enable the eye icon on the operator and execute the workflow to view its results.</p>
-          </div>
-        </nz-tab>
-      </div>
-      <div *ngFor="let config of frameComponentConfigs | keyvalue">
-        <nz-tab nzTitle="{{config.key}}">
-          <div
-            #dynamicComponent
-            class="result-content">
-            <ng-container
-              *ngComponentOutlet="config.value.component;inputs: config.value.componentInputs"></ng-container>
-          </div>
-        </nz-tab>
-      </div>
-    </nz-tabs>
-    <div
-      id="operator-tabs"
-      *ngIf="openOperatorIds.length > 0">
-      <div
-        *ngFor="let operatorId of openOperatorIds"
-        class="operator-tab"
-        [class.active]="operatorId === currentOperatorId">
-        <button
-          type="button"
-          class="operator-tab-label"
-          (click)="selectTab(operatorId)">
-          <span
-            *ngIf="hasError(operatorId)"
-            class="operator-tab-error"
-            aria-label="failed"></span>
-          {{ tabLabel(operatorId) }}
-        </button>
-        <button
-          type="button"
-          class="operator-tab-close"
-          [attr.aria-label]="'Close ' + tabLabel(operatorId)"
-          (click)="closeTab(operatorId)">
-          <span
-            nz-icon
-            nzType="close"></span>
-        </button>
-      </div>
-    </div>
+      [operatorId]="currentOperatorId"
+      [consoleInputEnabled]="consoleInputEnabled"></texera-console-frame>
   </div>
   <nz-resize-handles
     *ngIf="width"
