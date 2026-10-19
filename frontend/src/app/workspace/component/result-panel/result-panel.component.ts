@@ -58,7 +58,6 @@ import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
 import { NzTabsComponent, NzTabComponent } from "ng-zorro-antd/tabs";
-import { FormlyRepeatDndComponent } from "../../../common/formly/repeat-dnd/repeat-dnd.component";
 
 export const DEFAULT_WIDTH = 800;
 export const DEFAULT_HEIGHT = 500;
@@ -90,7 +89,6 @@ export const DEFAULT_HEIGHT = 500;
     NgFor,
     NgComponentOutlet,
     NzResizeHandlesComponent,
-    FormlyRepeatDndComponent,
     KeyValuePipe,
   ],
 })
@@ -150,6 +148,11 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
         this.closePanel();
       }
     });
+    // Once, for what is already there. Every re-render above waits for an event -- a state change,
+    // a highlight, a result arriving -- and none of those follows a hand-over between a workflow's
+    // two views: the highlight and the results are kept in root-provided services, so this panel
+    // would come up empty beside an operator that is still shown selected, until the next event.
+    this.rerenderResultPanel();
   }
 
   @HostListener("window:beforeunload")

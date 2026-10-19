@@ -29,6 +29,10 @@ object GuiConfig {
     conf.getBoolean("gui.login.local-login")
   val guiLoginGoogleLogin: Boolean =
     conf.getBoolean("gui.login.google-login")
+  val guiLoginOrcidLogin: Boolean =
+    conf.getBoolean("gui.login.orcid-login")
+  val guiLoginAppleLogin: Boolean =
+    conf.getBoolean("gui.login.apple-login")
   val guiLoginDefaultLocalUserUsername: String =
     if (conf.hasPath("gui.login.default-local-user.username"))
       conf.getString("gui.login.default-local-user.username")
@@ -43,10 +47,6 @@ object GuiConfig {
     conf.getBoolean("gui.workflow-workspace.user-preset-enabled")
   val guiWorkflowWorkspaceExportExecutionResultEnabled: Boolean =
     conf.getBoolean("gui.workflow-workspace.export-execution-result-enabled")
-  val guiWorkflowWorkspaceAutoAttributeCorrectionEnabled: Boolean =
-    conf.getBoolean("gui.workflow-workspace.auto-attribute-correction-enabled")
-  val guiWorkflowWorkspaceDefaultDataTransferBatchSize: Int =
-    conf.getInt("gui.workflow-workspace.default-data-transfer-batch-size")
   val guiWorkflowWorkspaceDefaultExecutionMode: String =
     conf.getString("gui.workflow-workspace.default-execution-mode")
   val guiWorkflowWorkspaceSelectingFilesFromDatasetsEnabled: Boolean =
@@ -59,6 +59,8 @@ object GuiConfig {
     conf.getBoolean("gui.workflow-workspace.async-rendering-enabled")
   val guiWorkflowWorkspaceTimetravelEnabled: Boolean =
     conf.getBoolean("gui.workflow-workspace.timetravel-enabled")
+  val guiWorkflowWorkspaceFormViewEnabled: Boolean =
+    conf.getBoolean("gui.workflow-workspace.form-view-enabled")
   val guiWorkflowWorkspaceProductionSharedEditingServer: Boolean =
     conf.getBoolean("gui.workflow-workspace.production-shared-editing-server")
   val guiWorkflowWorkspacePythonLanguageServerPort: String =
@@ -75,6 +77,10 @@ object GuiConfig {
     conf.getInt("gui.workflow-workspace.limit-columns")
   val guiAttributionEnabled: Boolean =
     conf.getBoolean("gui.attribution-enabled")
+  val guiDeploymentVersionCheckEnabled: Boolean =
+    conf.getBoolean("gui.deployment-version-check-enabled")
   val guiWorkflowWorkspacePythonNotebookMigrationEnabled: Boolean =
     conf.getBoolean("gui.workflow-workspace.python-notebook-migration-enabled")
+  val guiWorkflowWorkspacePythonNotebookMigrationTimeoutMinutes: Int =
+    conf.getInt("gui.workflow-workspace.python-notebook-migration-timeout-minutes")
 }

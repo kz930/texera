@@ -15,26 +15,20 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import os
-import sys
-import traceback
 from contextlib import contextmanager
-from loguru import logger
+
+import pandas
 from threading import Event
 from typing import Iterator, Optional
 
 from core.architecture.managers import Context
-from core.models import ExceptionInfo, State, TupleLike, InternalMarker
-from core.models.internal_marker import StartChannel, EndChannel
+from core.models import AttributeType, Schema, State, TupleLike
+from core.models.internal_marker import EndChannel, PortMarker, StartChannel
+from core.models.operator import require_yielded
 from core.models.table import all_output_to_tuple
 from core.util import Stoppable
 from core.util.console_message.replace_print import replace_print
-from core.util.console_message.timestamp import current_time_in_local_timezone
 from core.util.runnable import Runnable
-from proto.org.apache.texera.amber.engine.architecture.rpc import (
-    ConsoleMessage,
-    ConsoleMessageType,
-)
 
 
 class DataProcessor(Runnable, Stoppable):
@@ -74,8 +68,10 @@ class DataProcessor(Runnable, Stoppable):
             else:
                 self.process_tuple()
 
-    def process_internal_marker(self, internal_marker: InternalMarker) -> None:
-        with self._executor_session() as (executor, port_id):
+    def process_internal_marker(self, internal_marker: PortMarker) -> None:
+        if not isinstance(internal_marker, PortMarker):
+            raise TypeError("expected a PortMarker")
+        with self._executor_session(internal_marker.port_id) as (executor, port_id):
             if isinstance(internal_marker, StartChannel):
                 self._set_output_state(executor.produce_state_on_start(port_id))
             elif isinstance(internal_marker, EndChannel):
@@ -83,7 +79,9 @@ class DataProcessor(Runnable, Stoppable):
                 # Flush the state to MainLoop before producing tuples so the
                 # state and the tuple stream don't share a single switch.
                 self._switch_context()
-                self._set_output_tuple(executor.on_finish(port_id))
+                self._set_output_tuple(
+                    require_yielded(executor.on_finish(port_id), "on_finish")
+                )
 
     def process_state(self, state: State) -> None:
         """
@@ -101,10 +99,14 @@ class DataProcessor(Runnable, Stoppable):
         while not finished_current.is_set():
             with self._executor_session() as (executor, port_id):
                 tuple_ = self._context.tuple_processing_manager.get_input_tuple()
-                self._set_output_tuple(executor.process_tuple(tuple_, port_id))
+                self._set_output_tuple(
+                    require_yielded(
+                        executor.process_tuple(tuple_, port_id), "process_tuple"
+                    )
+                )
 
     @contextmanager
-    def _executor_session(self):
+    def _executor_session(self, marker_port_id: int | None = None):
         """
         Open one executor invocation: hand back (executor, port_id) under a
         print-capture session, route any exception to the exception manager
@@ -112,21 +114,22 @@ class DataProcessor(Runnable, Stoppable):
         back to MainLoop on exit. Reporting must happen *before* the
         switch: MainLoop's post-switch hook flushes console messages and
         then enters EXCEPTION_PAUSE, so anything queued after the switch
-        would arrive at the controller only after the worker resumes.
+        would arrive at the coordinator only after the worker resumes.
         """
         try:
             executor = self._context.executor_manager.executor
-            port_id = self._context.tuple_processing_manager.get_input_port_id()
+            port_id = (
+                self._context.tuple_processing_manager.get_input_port_id()
+                if marker_port_id is None
+                else marker_port_id
+            )
             with replace_print(
                 self._context.worker_id,
                 self._context.console_message_manager.print_buf,
             ):
                 yield executor, port_id
         except Exception as err:
-            logger.exception(err)
-            exc_info = sys.exc_info()
-            self._context.exception_manager.set_exception_info(exc_info)
-            self._report_exception(exc_info)
+            self._context.report_exception(err)
         finally:
             self._switch_context()
 
@@ -138,15 +141,49 @@ class DataProcessor(Runnable, Stoppable):
             # output could be a None, a TupleLike, or a TableLike.
             for output_tuple in all_output_to_tuple(output):
                 if output_tuple is not None:
-                    output_tuple.finalize(
-                        self._context.output_manager.get_port().get_schema()
-                    )
+                    schema = self._context.output_manager.get_port().get_schema()
+                    try:
+                        output_tuple.finalize(schema)
+                    except (KeyError, TypeError) as error:
+                        # Only explain on failure, so valid rows are not inspected.
+                        raise self._explain_schema_mismatch(
+                            output, schema, error
+                        ) from error
                 self._switch_context()
                 self._context.tuple_processing_manager.current_output_tuple = (
                     output_tuple
                 )
                 self._switch_context()
         self._context.tuple_processing_manager.finished_current.set()
+
+    @staticmethod
+    def _explain_schema_mismatch(output, schema: Schema, error: Exception) -> Exception:
+        """
+        Rebuild a schema check failure with a hint on how to fix the output,
+        keeping the original message. The schema check reports missing or
+        extra columns (KeyError) before wrong types (TypeError), so only a
+        TypeError can be caused by a DataFrame sitting in a column; a
+        DataFrame is valid in a BINARY column, where it is pickled.
+        """
+        message = error.args[0] if error.args else str(error)
+        if isinstance(error, TypeError) and isinstance(output, dict):
+            columns = set(schema.get_attr_names())
+            for key, value in output.items():
+                if (
+                    isinstance(value, pandas.DataFrame)
+                    and key in columns
+                    and schema.get_attr_type(key) != AttributeType.BINARY
+                ):
+                    return TypeError(
+                        f"{message} A DataFrame was put in column '{key}'. To "
+                        "output its rows, yield the DataFrame itself instead of "
+                        "a dict; to keep it as one value, make the column binary."
+                    )
+        return type(error)(
+            f"{message} The yielded columns and their types must match the "
+            "operator's output columns: 'Retain input columns' and 'Extra output "
+            "column(s)' for a Python UDF, or 'Columns' for a 1-out Python UDF."
+        )
 
     def _set_output_state(self, output_state: State) -> None:
         """
@@ -174,26 +211,6 @@ class DataProcessor(Runnable, Stoppable):
             # This line will also trigger cmdloop in the debugger.
             # This line has no side effects on the current debugger state.
             self._context.debug_manager.debugger.set_trace()
-
-    def _report_exception(self, exc_info: ExceptionInfo):
-        tb = traceback.extract_tb(exc_info[2])
-        filename, line_number, func_name, text = tb[-1]
-        base_name = os.path.basename(filename)
-        module_name, _ = os.path.splitext(base_name)
-        formatted_exception = traceback.format_exception(*exc_info)
-        title: str = formatted_exception[-1].strip()
-        message: str = "\n".join(formatted_exception)
-
-        self._context.console_message_manager.put_message(
-            ConsoleMessage(
-                worker_id=self._context.worker_id,
-                timestamp=current_time_in_local_timezone(),
-                msg_type=ConsoleMessageType.ERROR,
-                source=f"{module_name}:{func_name}:{line_number}",
-                title=title,
-                message=message,
-            )
-        )
 
     def stop(self):
         self._running.clear()

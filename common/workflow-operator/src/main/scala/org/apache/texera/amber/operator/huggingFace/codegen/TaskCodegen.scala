@@ -25,7 +25,7 @@ import org.apache.texera.amber.pybuilder.PyStringTypes.EncodableString
   * Inputs the dispatcher passes through to each TaskCodegen.
   *
   * User-provided string fields are typed as [[EncodableString]] so the
-  * `pyb"..."` macro in [[PythonCodegenBase]] emits them as base64-decoded
+  * `pyb"..."` macro in [[HuggingFaceCodegenBase]] emits them as base64-decoded
   * runtime expressions rather than raw Python string literals — required to
   * pass `PythonCodeRawInvalidTextSpec`'s leakage check.
   */
@@ -37,7 +37,14 @@ final case class CodegenContext(
     task: EncodableString,
     systemPrompt: EncodableString,
     safeMaxTokens: Int,
-    safeTemp: Double
+    safeTemp: Double,
+    imageInput: EncodableString = "",
+    inputImageColumn: EncodableString = "",
+    audioInput: EncodableString = "",
+    inputAudioColumn: EncodableString = "",
+    contextColumn: EncodableString = "",
+    candidateLabels: EncodableString = "",
+    sentencesColumn: EncodableString = ""
 )
 
 /**
@@ -50,7 +57,7 @@ final case class CodegenContext(
   * `*Codegen` objects and adding them to that map.
   *
   * Snippets returned by these methods are Python source spliced into the
-  * shared template assembled by [[PythonCodegenBase.render]]. Snippets must
+  * shared template assembled by [[HuggingFaceCodegenBase.render]]. Snippets must
   * NOT directly inline user-provided strings — reference the per-instance
   * attributes `self.HF_API_TOKEN`, `self.MODEL_ID`, `self.PROMPT_COLUMN`,
   * etc. that the base class initializes from `CodegenContext` via the
@@ -59,8 +66,18 @@ final case class CodegenContext(
   */
 trait TaskCodegen {
 
-  /** Canonical Hugging Face pipeline task string, e.g. "text-generation". */
+  /** Canonical Hugging Face pipeline task string used as the primary key for
+    * registration, e.g. "text-generation". Codegens that handle multiple
+    * task strings (image, audio, …) override [[tasks]] to enumerate all of
+    * them — the operator's dispatcher registers an entry per task.
+    */
   def task: String
+
+  /** All Hugging Face pipeline task strings handled by this codegen.
+    * Defaults to the singleton `Set(task)` for codegens that handle one
+    * task; multi-task codegens override this.
+    */
+  def tasks: Set[String] = Set(task)
 
   /** Python text that assigns `payload = …` for one row inside
     * `process_table`'s per-row loop. The snippet supplies its own leading

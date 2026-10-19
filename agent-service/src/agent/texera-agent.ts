@@ -75,11 +75,11 @@ type ReActStepCallback = (step: ReActStep) => void;
 /**
  * A single Texera agent instance.
  *
- * Owns the conversation (ReAct step tree with HEAD/checkout semantics), the
+ * Owns the conversation (ReAct step tree with HEAD tracking), the
  * workflow being edited (`WorkflowState`), cached operator execution results
  * (`WorkflowResultState`), and the tool surface exposed to the LLM. Each call
  * to `sendMessage` drives one multi-step generation via the Vercel AI SDK,
- * streaming step updates to subscribed websockets.
+ * streaming step updates to subscribed clients.
  */
 export class TexeraAgent {
   readonly agentId: string;
@@ -95,7 +95,7 @@ export class TexeraAgent {
   private stepCounter = 0;
   private workflowResultState: WorkflowResultState;
 
-  private websockets: Set<any> = new Set();
+  private clients: Set<any> = new Set();
 
   private model: LanguageModel;
   private systemPrompt: string;
@@ -111,6 +111,7 @@ export class TexeraAgent {
     workflowId: number;
     workflowName?: string;
     computingUnitId?: number;
+    warehouseId?: number;
   };
 
   private stepCallback: ReActStepCallback | null = null;
@@ -185,6 +186,7 @@ export class TexeraAgent {
       userToken: this.delegateConfig.userToken,
       workflowId: this.delegateConfig.workflowId,
       computingUnitId: this.delegateConfig.computingUnitId,
+      warehouseId: this.delegateConfig.warehouseId,
       maxOperatorResultCharLimit: this.settings.maxOperatorResultCharLimit,
       maxOperatorResultCellCharLimit: this.settings.maxOperatorResultCellCharLimit,
       executionTimeoutMs: this.settings.executionTimeoutMs,
@@ -266,16 +268,16 @@ export class TexeraAgent {
     return this.workflowResultState;
   }
 
-  getWebsockets(): Set<any> {
-    return this.websockets;
+  getClients(): Set<any> {
+    return this.clients;
   }
 
-  addWebsocket(ws: any): void {
-    this.websockets.add(ws);
+  addClient(ws: any): void {
+    this.clients.add(ws);
   }
 
-  removeWebsocket(ws: any): void {
-    this.websockets.delete(ws);
+  removeClient(ws: any): void {
+    this.clients.delete(ws);
   }
 
   getReActSteps(): ReActStep[] {
@@ -296,16 +298,6 @@ export class TexeraAgent {
 
   getAllSteps(): ReActStep[] {
     return Array.from(this.stepsById.values()).filter(s => s.id !== INITIAL_STEP_ID);
-  }
-
-  checkout(stepId: string): boolean {
-    const step = this.stepsById.get(stepId);
-    if (!step && stepId !== INITIAL_STEP_ID) return false;
-    this.head = stepId;
-    if (step?.afterWorkflowContent) {
-      this.workflowState.setWorkflowContent(step.afterWorkflowContent);
-    }
-    return true;
   }
 
   setStepCallback(callback: ReActStepCallback | null): void {
@@ -387,7 +379,7 @@ export class TexeraAgent {
       this.settings.disabledTools = updates.disabledTools;
     }
     if (updates.maxSteps !== undefined) {
-      this.settings.maxSteps = updates.maxSteps;
+      this.settings.maxSteps = Math.max(1, Math.trunc(updates.maxSteps));
     }
     if (updates.allowedOperatorTypes !== undefined) {
       this.settings.allowedOperatorTypes = updates.allowedOperatorTypes;
@@ -435,6 +427,7 @@ export class TexeraAgent {
     workflowId: number;
     workflowName?: string;
     computingUnitId?: number;
+    warehouseId?: number;
   }): void {
     this.delegateConfig = config;
 
@@ -443,8 +436,27 @@ export class TexeraAgent {
     this.setupWorkflowChangeHandlers();
   }
 
+  /**
+   * Point the delegate at the warehouse the workspace has selected now. The rest
+   * of the config is fixed at creation; this one travels per prompt because the
+   * user can pick (or first load) a warehouse after the agent exists (#7751).
+   */
+  setDelegateWarehouse(warehouseId: number | undefined): void {
+    if (!this.delegateConfig || this.delegateConfig.warehouseId === warehouseId) {
+      return;
+    }
+    this.delegateConfig = { ...this.delegateConfig, warehouseId };
+  }
+
   getDelegateConfig():
-    | { userToken: string; userInfo?: UserInfo; workflowId: number; workflowName?: string; computingUnitId?: number }
+    | {
+        userToken: string;
+        userInfo?: UserInfo;
+        workflowId: number;
+        workflowName?: string;
+        computingUnitId?: number;
+        warehouseId?: number;
+      }
     | undefined {
     return this.delegateConfig;
   }
@@ -667,7 +679,8 @@ export class TexeraAgent {
         stopped: false,
       };
     } catch (error: any) {
-      const isAborted = error.name === "AbortError" || this.abortController?.signal.aborted;
+      const errorMessage = error?.message || String(error);
+      const isAborted = error?.name === "AbortError" || this.abortController?.signal.aborted;
 
       if (isAborted) {
         stepIndex++;
@@ -703,7 +716,7 @@ export class TexeraAgent {
         stepId: stepIndex,
         timestamp: Date.now(),
         role: "agent",
-        content: `Error: ${error.message || String(error)}`,
+        content: `Error: ${errorMessage}`,
         isBegin: false,
         isEnd: true,
       };
@@ -715,7 +728,7 @@ export class TexeraAgent {
         messages: [],
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         stopped: false,
-        error: error.message || String(error),
+        error: errorMessage,
       };
     } finally {
       this.abortController = null;
@@ -831,7 +844,7 @@ export class TexeraAgent {
 
     this.workflowState.destroy();
 
-    this.websockets.clear();
+    this.clients.clear();
 
     this.reActStepsByMessageId.clear();
     this.stepsById.clear();

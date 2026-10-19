@@ -40,6 +40,7 @@ import { AppSettings } from "../../../common/app-setting";
 import { AgentState, ReActStep, ModelMessage } from "./agent-types";
 import { Workflow, WorkflowContent } from "../../../common/type/workflow";
 import { ComputingUnitStatusService } from "../../../common/service/computing-unit/computing-unit-status/computing-unit-status.service";
+import { WarehouseService } from "../../../common/service/warehouse/warehouse.service";
 
 /**
  * Agent settings for API (serializable format).
@@ -210,23 +211,20 @@ export class AgentService {
   private modelTypes$: Observable<ModelType[]> | null = null;
 
   // ============================================================================
-  // Canvas annotation state (port shapes, step badges, scroll-to-step)
+  // Canvas annotation state (port shapes, step badges)
   // ============================================================================
 
   /** Whether to show output port shapes (rows, columns) on operators */
   private showPortShapesSubject = new BehaviorSubject<boolean>(true);
   public showPortShapes$ = this.showPortShapesSubject.asObservable();
 
-  /** Subject emitting scroll-to-step requests */
-  private scrollToStepSubject = new Subject<{ agentId: string; messageId: string; stepId: number }>();
-  public scrollToStep$ = this.scrollToStepSubject.asObservable();
-
   constructor(
     private http: HttpClient,
     private notificationService: NotificationService,
     private workflowPersistService: WorkflowPersistService,
     private ngZone: NgZone,
-    private computingUnitStatusService: ComputingUnitStatusService
+    private computingUnitStatusService: ComputingUnitStatusService,
+    private warehouseService: WarehouseService
   ) {
     // Sync local cache with backend on service initialization
     // This handles cases where the backend was restarted
@@ -449,7 +447,7 @@ export class AgentService {
    */
   private handleWebSocketMessage(agentId: string, tracking: AgentStateTracking, message: any): void {
     switch (message.type) {
-      case "init":
+      case "WsServerSnapshotEvent":
         // Initial state and steps
         if (message.state) {
           tracking.stateSubject.next(this.mapStateToAgentState(message.state));
@@ -471,13 +469,9 @@ export class AgentService {
           };
           tracking.workflowSubject.next(workflow as Workflow);
         }
-        // Handle initial operator results
-        if (message.operatorResults) {
-          this.updateOperatorResultSummaries(message.operatorResults);
-        }
         break;
 
-      case "step":
+      case "WsServerStepEvent":
         // New step received - update existing step or append new one
         if (message.step) {
           const convertedStep = this.convertApiReActStep(message.step);
@@ -516,49 +510,14 @@ export class AgentService {
         }
         break;
 
-      case "state":
+      case "WsServerStatusEvent":
         // State update
         if (message.state) {
           tracking.stateSubject.next(this.mapStateToAgentState(message.state));
         }
         break;
 
-      case "complete":
-        // Message processing complete
-        if (message.state) {
-          tracking.stateSubject.next(this.mapStateToAgentState(message.state));
-        }
-        // Update operator results on completion
-        if (message.operatorResults) {
-          this.updateOperatorResultSummaries(message.operatorResults);
-        }
-        break;
-
-      case "headChange":
-        // HEAD moved (checkout) — update HEAD, visible steps, and workflow
-        if (message.headId !== undefined) {
-          tracking.headIdSubject.next(message.headId);
-        }
-        if (message.steps && Array.isArray(message.steps)) {
-          const steps = message.steps.map((s: any) => this.convertApiReActStep(s));
-          tracking.reActStepsSubject.next(steps);
-        }
-        // Update workflow content from agent service (ground truth)
-        if (message.workflowContent) {
-          tracking.wsWorkflowActive = true;
-          const workflow: Workflow = {
-            ...(message.workflowMetadata || tracking.workflowSubject.getValue() || {}),
-            content: message.workflowContent,
-          };
-          tracking.workflowSubject.next(workflow as Workflow);
-        }
-        // Update operator results on HEAD change
-        if (message.operatorResults) {
-          this.updateOperatorResultSummaries(message.operatorResults);
-        }
-        break;
-
-      case "error":
+      case "WsServerErrorEvent":
         // Error occurred
         console.error(`Agent ${agentId} error:`, message.error);
 
@@ -908,11 +867,18 @@ export class AgentService {
       return;
     }
 
-    const wsMessage = {
-      type: "message",
+    const wsMessage: { type: string; content: string; messageSource: string; warehouseId?: number } = {
+      type: "WsClientPromptCommand",
       content: message,
       messageSource,
     };
+    // Sent per message, not fixed at agent creation: an agent created before the
+    // warehouse picker loaded would otherwise never carry one, and every run it
+    // attempted would be refused (#7751).
+    const selectedWarehouseId = this.warehouseService.getSelectedWarehouseIdValue();
+    if (selectedWarehouseId !== undefined) {
+      wsMessage.warehouseId = selectedWarehouseId;
+    }
 
     try {
       tracking.websocket.send(JSON.stringify(wsMessage));
@@ -967,7 +933,7 @@ export class AgentService {
     if (tracking?.websocket && tracking.websocket.readyState === WebSocket.OPEN) {
       // Send stop via WebSocket for immediate effect
       try {
-        tracking.websocket.send(JSON.stringify({ type: "stop" }));
+        tracking.websocket.send(JSON.stringify({ type: "WsClientStopCommand" }));
       } catch (error) {
         console.error("Failed to send stop command:", error);
       }
@@ -1023,14 +989,6 @@ export class AgentService {
   public getHeadId(agentId: string): string | null {
     const tracking = this.agentStateTracking.get(agentId);
     return tracking ? tracking.headIdSubject.getValue() : null;
-  }
-
-  /**
-   * Checkout to a specific step (move HEAD, restore workflow).
-   * The backend broadcasts headChange + visible steps via WebSocket to all clients.
-   */
-  public checkoutStep(agentId: string, stepId: string): Observable<any> {
-    return this.http.post(`${this.AGENT_API_BASE}/agents/${agentId}/checkout`, { stepId });
   }
 
   /**
@@ -1262,45 +1220,16 @@ export class AgentService {
     return this.showPortShapesSubject.getValue();
   }
 
-  /**
-   * Request scrolling to a specific step in the agent chat.
-   */
-  public requestScrollToStep(agentId: string, messageId: string, stepId: number): void {
-    this.scrollToStepSubject.next({ agentId, messageId, stepId });
-  }
-
   // ============================================================================
   // Operator Result Annotation Methods
   // ============================================================================
-
-  /** Whether operator result annotations are currently visible */
-  private resultAnnotationsVisibleSubject = new BehaviorSubject<boolean>(false);
-  public resultAnnotationsVisible$ = this.resultAnnotationsVisibleSubject.asObservable();
 
   /** Current operator result summaries (operatorId → summary) */
   private operatorResultSummariesSubject = new BehaviorSubject<Map<string, OperatorResultSummary>>(new Map());
   public operatorResultSummaries$ = this.operatorResultSummariesSubject.asObservable();
 
   /**
-   * Toggle operator result annotations on/off.
-   * When toggling on, fetches the latest results from the active agent.
-   */
-  public toggleResultAnnotations(agentId?: string): void {
-    const newState = !this.resultAnnotationsVisibleSubject.getValue();
-    if (newState) {
-      const id = agentId ?? this.getActivelyConnectedAgentIds()[0];
-      if (!id) {
-        // No active agent — nothing to fetch
-        return;
-      }
-      this.fetchOperatorResults(id);
-    } else {
-      this.resultAnnotationsVisibleSubject.next(false);
-    }
-  }
-
-  /**
-   * Update operator result summaries from a WebSocket or API response.
+   * Update operator result summaries from an API response.
    */
   private updateOperatorResultSummaries(results: Record<string, OperatorResultSummary>): void {
     const summaries = new Map<string, OperatorResultSummary>();
@@ -1311,7 +1240,10 @@ export class AgentService {
   }
 
   /**
-   * Fetch operator results from the backend (fallback if WebSocket data not available).
+   * Pull the agent's latest operator result summaries from the backend and push
+   * them to `operatorResultSummaries$`. Called on demand when the UI needs to
+   * show results (e.g. opening an operator's popover); results are no longer
+   * pushed over the WebSocket.
    */
   public fetchOperatorResults(agentId: string): void {
     this.http
@@ -1322,14 +1254,6 @@ export class AgentService {
       .pipe(catchError(() => of({ results: {} as Record<string, OperatorResultSummary> })))
       .subscribe(response => {
         this.updateOperatorResultSummaries(response.results);
-        this.resultAnnotationsVisibleSubject.next(true);
       });
-  }
-
-  /**
-   * Get current result annotations visibility.
-   */
-  public getResultAnnotationsVisible(): boolean {
-    return this.resultAnnotationsVisibleSubject.getValue();
   }
 }

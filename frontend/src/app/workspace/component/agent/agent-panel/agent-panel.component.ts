@@ -24,7 +24,7 @@ import { AgentService, AgentInfo } from "../../../service/agent/agent.service";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { NotificationService } from "../../../../common/service/notification/notification.service";
 import { calculateTotalTranslate3d } from "../../../../common/util/panel-dock";
-import { NgIf, NgClass, NgFor } from "@angular/common";
+import { NgIf, NgFor } from "@angular/common";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
 import { NzWaveDirective } from "ng-zorro-antd/core/wave";
@@ -36,7 +36,6 @@ import { NzMenuDirective, NzMenuItemComponent } from "ng-zorro-antd/menu";
 import { NzTabsComponent, NzTabBarExtraContentDirective, NzTabComponent, NzTabDirective } from "ng-zorro-antd/tabs";
 import { AgentRegistrationComponent } from "./agent-registration/agent-registration.component";
 import { AgentChatComponent } from "./agent-chat/agent-chat.component";
-import { FormlyRepeatDndComponent } from "../../../../common/formly/repeat-dnd/repeat-dnd.component";
 
 @UntilDestroy()
 @Component({
@@ -54,7 +53,6 @@ import { FormlyRepeatDndComponent } from "../../../../common/formly/repeat-dnd/r
     CdkDrag,
     NzResizableDirective,
     NzMenuDirective,
-    NgClass,
     NzMenuItemComponent,
     CdkDragHandle,
     NzTabsComponent,
@@ -65,7 +63,6 @@ import { FormlyRepeatDndComponent } from "../../../../common/formly/repeat-dnd/r
     NgFor,
     AgentChatComponent,
     NzResizeHandlesComponent,
-    FormlyRepeatDndComponent,
   ],
 })
 export class AgentPanelComponent implements OnInit, OnDestroy, OnChanges {

@@ -20,27 +20,58 @@
 package org.apache.texera.service
 
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
-import io.dropwizard.auth.AuthDynamicFeature
 import io.dropwizard.configuration.{EnvironmentVariableSubstitutor, SubstitutingSourceProvider}
 import io.dropwizard.core.Application
 import io.dropwizard.core.setup.{Bootstrap, Environment}
-import org.apache.texera.common.config.StorageConfig
-import org.apache.texera.auth.{
-  JwtAuthFilter,
-  RequestLoggingFilter,
-  SessionUser,
-  UnauthorizedExceptionMapper
-}
+import org.apache.texera.common.config.{KubernetesConfig, StorageConfig}
+import org.apache.texera.auth.{AuthFeatures, RequestLoggingFilter, RoleAnnotationEnforcer}
 import org.apache.texera.dao.SqlServer
 import org.apache.texera.service.resource.{
+  AdminComputingUnitResource,
   ComputingUnitAccessResource,
   ComputingUnitManagingResource,
+  CuratedImageResource,
   HealthCheckResource
 }
-import org.glassfish.jersey.server.filter.RolesAllowedDynamicFeature
+import org.apache.texera.service.util.IdleComputingUnitCleanupJob
+import org.slf4j.LoggerFactory
 import java.nio.file.Path
 
 class ComputingUnitManagingService extends Application[ComputingUnitManagingServiceConfiguration] {
+  private val logger = LoggerFactory.getLogger(classOf[ComputingUnitManagingService])
+
+  private def initSqlServer(): Unit =
+    SqlServer.initConnection(
+      StorageConfig.jdbcUrl,
+      StorageConfig.jdbcUsername,
+      StorageConfig.jdbcPassword
+    )
+
+  /**
+    * Registers the periodic idle computing unit cleanup job on the application lifecycle when
+    * enabled. Extracted from `run` (and kept free of any global config reads) so the conditional
+    * wiring can be unit-tested with a standalone `Environment`.
+    */
+  private[service] def registerIdleComputingUnitCleanup(
+      environment: Environment,
+      enabled: Boolean,
+      idleTimeoutMinutes: Long,
+      intervalMinutes: Long
+  ): Unit =
+    if (enabled) {
+      // The job's scheduler rejects a non-positive delay, and a misconfigured sweep should leave
+      // the rest of the service usable, so log it and skip rather than abort startup.
+      if (idleTimeoutMinutes <= 0 || intervalMinutes <= 0) {
+        logger.warn(
+          s"Idle Kubernetes computing unit cleanup is disabled: timeout and check interval must " +
+            s"both be positive but are $idleTimeoutMinutes and $intervalMinutes minute(s)"
+        )
+      } else {
+        environment
+          .lifecycle()
+          .manage(new IdleComputingUnitCleanupJob(idleTimeoutMinutes, intervalMinutes))
+      }
+    }
 
   override def initialize(
       bootstrap: Bootstrap[ComputingUnitManagingServiceConfiguration]
@@ -63,16 +94,28 @@ class ComputingUnitManagingService extends Application[ComputingUnitManagingServ
     environment.jersey.setUrlPattern("/api/*")
     environment.jersey.register(classOf[HealthCheckResource])
 
-    ComputingUnitManagingService.registerAuthFeatures(environment)
+    AuthFeatures.register(environment)
 
-    SqlServer.initConnection(
-      StorageConfig.jdbcUrl,
-      StorageConfig.jdbcUsername,
-      StorageConfig.jdbcPassword
-    )
+    initSqlServer()
 
     environment.jersey().register(new ComputingUnitManagingResource)
     environment.jersey().register(new ComputingUnitAccessResource)
+    environment.jersey().register(new AdminComputingUnitResource)
+    environment.jersey().register(new CuratedImageResource)
+
+    RoleAnnotationEnforcer.enforce(
+      environment.jersey.getResourceConfig,
+      "ComputingUnitManagingService"
+    )
+
+    // Periodically terminate Kubernetes computing units their owners have stopped using
+    registerIdleComputingUnitCleanup(
+      environment,
+      KubernetesConfig.kubernetesComputingUnitEnabled &&
+        KubernetesConfig.computingUnitIdleCleanupEnabled,
+      KubernetesConfig.computingUnitIdleTimeoutMinutes,
+      KubernetesConfig.computingUnitIdleCheckIntervalMinutes
+    )
 
     // Route request logs through SLF4J, controlled by TEXERA_SERVICE_LOG_LEVEL
     RequestLoggingFilter.register(environment.getApplicationContext)
@@ -80,21 +123,6 @@ class ComputingUnitManagingService extends Application[ComputingUnitManagingServ
 }
 
 object ComputingUnitManagingService {
-  // Registers JWT auth, @Auth injection, and @RolesAllowed enforcement.
-  def registerAuthFeatures(environment: Environment): Unit = {
-    // Register JWT authentication filter
-    environment.jersey.register(new AuthDynamicFeature(classOf[JwtAuthFilter]))
-    environment.jersey.register(classOf[UnauthorizedExceptionMapper])
-
-    // Enable @Auth annotation for injecting SessionUser
-    environment.jersey.register(
-      new io.dropwizard.auth.AuthValueFactoryProvider.Binder(classOf[SessionUser])
-    )
-
-    // Enforce @RolesAllowed annotations on resource methods
-    environment.jersey.register(classOf[RolesAllowedDynamicFeature])
-  }
-
   def main(args: Array[String]): Unit = {
     val configFilePath = Path
       .of(sys.env.getOrElse("TEXERA_HOME", "."))

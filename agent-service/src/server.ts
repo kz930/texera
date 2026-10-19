@@ -39,7 +39,10 @@ import type {
   AgentSettingsApi,
   ReActStep,
 } from "./types/agent";
-import { OperatorResultSerializationMode } from "./types/agent";
+import { AgentState, OperatorResultSerializationMode } from "./types/agent";
+import type { WsClientCommand, WsServerEvent } from "./types/ws";
+import { WsServerSnapshotEvent, WsServerStepEvent, WsServerStatusEvent, WsServerErrorEvent } from "./types/ws";
+import type { OperatorResultSummary } from "./types/execution";
 
 const agentStore = new Map<string, TexeraAgent>();
 let agentCounter = 0;
@@ -127,6 +130,7 @@ function getAgentInfo(agentId: string, agent: TexeraAgent): AgentInfo {
           workflowId: delegateConfig.workflowId,
           workflowName: delegateConfig.workflowName,
           computingUnitId: delegateConfig.computingUnitId,
+          warehouseId: delegateConfig.warehouseId,
         }
       : undefined,
     settings: settingsApi,
@@ -238,7 +242,7 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
             toolTimeoutSeconds: t.Optional(t.Number()),
             executionTimeoutMinutes: t.Optional(t.Number()),
             disabledTools: t.Optional(t.Array(t.String())),
-            maxSteps: t.Optional(t.Number()),
+            maxSteps: t.Optional(t.Integer({ minimum: 1 })),
             allowedOperatorTypes: t.Optional(t.Array(t.String())),
           })
         ),
@@ -306,31 +310,6 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
     const agent = getAgent(id);
     agent.clearHistory();
     return { status: "cleared" };
-  })
-
-  .post("/:id/checkout", ({ params: { id }, body }) => {
-    const agent = getAgent(id);
-    const { stepId } = body as { stepId: string };
-    if (!stepId) throw new Error("stepId is required");
-
-    const success = agent.checkout(stepId);
-    if (!success) throw new Error(`Step ${stepId} not found or checkout failed`);
-
-    const allSteps = agent.getAllSteps();
-    const workflowContent = agent.getWorkflowState().getWorkflowContent();
-
-    broadcastToAgent(id, {
-      type: "headChange",
-      headId: stepId,
-      steps: allSteps,
-      workflowContent,
-      operatorResults: getOperatorResultSummaries(agent),
-    });
-
-    return {
-      status: "checked out",
-      headId: stepId,
-    };
   })
 
   .get("/:id/operator-types", ({ params: { id } }) => {
@@ -403,48 +382,17 @@ const agentsRouter = new Elysia({ prefix: "/agents" })
         operatorResultSerializationMode: t.Optional(t.Literal("tsv")),
         toolTimeoutSeconds: t.Optional(t.Number()),
         executionTimeoutMinutes: t.Optional(t.Number()),
-        maxSteps: t.Optional(t.Number()),
+        maxSteps: t.Optional(t.Integer({ minimum: 1 })),
         disabledTools: t.Optional(t.Array(t.String())),
         allowedOperatorTypes: t.Optional(t.Array(t.String())),
       }),
     }
   );
 
-interface WsMessage {
-  type: "message" | "stop";
-  content?: string;
-  messageSource?: "chat" | "feedback";
-}
-
-interface OperatorResultSummaryWs {
-  state: string;
-  inputTuples: number;
-  outputTuples: number;
-  inputPortShapes?: { portIndex: number; rows: number; columns: number }[];
-  outputColumns?: number;
-  error?: string;
-  warnings?: string[];
-  consoleLogCount?: number;
-  totalRowCount?: number;
-  sampleRecords?: Record<string, any>[];
-  resultStatistics?: Record<string, string>;
-}
-
-interface WsOutgoingMessage {
-  type: "step" | "state" | "error" | "complete" | "init" | "headChange";
-  step?: ReActStep;
-  state?: string;
-  error?: string;
-  steps?: ReActStep[];
-  headId?: string;
-  operatorResults?: Record<string, OperatorResultSummaryWs>;
-  workflowContent?: any;
-}
-
-function getOperatorResultSummaries(agent: TexeraAgent): Record<string, OperatorResultSummaryWs> {
+function getOperatorResultSummaries(agent: TexeraAgent): Record<string, OperatorResultSummary> {
   const resultState = agent.getWorkflowResultState();
   const visible = resultState.getAllVisible();
-  const results: Record<string, OperatorResultSummaryWs> = {};
+  const results: Record<string, OperatorResultSummary> = {};
   for (const [opId, entry] of visible) {
     const info = entry.operatorInfo;
     results[opId] = {
@@ -464,17 +412,24 @@ function getOperatorResultSummaries(agent: TexeraAgent): Record<string, Operator
   return results;
 }
 
-function broadcastToAgent(agentId: string, message: WsOutgoingMessage): void {
+// Send a single server event to one client. Each event is constructed with
+// `new WsServer*Event(...)`, so the `type` tag is never hand-written here.
+function sendEventToClient(ws: { send(data: string): void }, event: WsServerEvent): void {
+  ws.send(JSON.stringify(event));
+}
+
+// Broadcast a server event to every client attached to the agent.
+function broadcastToAgentClients(agentId: string, event: WsServerEvent): void {
   const agent = agentStore.get(agentId);
   if (!agent) return;
 
-  const jsonMessage = JSON.stringify(message);
-  for (const ws of agent.getWebsockets()) {
+  const serializedEvent = JSON.stringify(event);
+  for (const ws of agent.getClients()) {
     try {
-      ws.send(jsonMessage);
+      ws.send(serializedEvent);
     } catch (error) {
-      wsLog.error({ agentId, err: error }, "failed to send message to client");
-      agent.removeWebsocket(ws);
+      wsLog.error({ agentId, err: error }, "failed to send event to a client");
+      agent.removeClient(ws);
     }
   }
 }
@@ -497,21 +452,14 @@ export function buildApp() {
 
         const agent = agentStore.get(agentId);
         if (!agent) {
-          ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+          sendEventToClient(ws, new WsServerErrorEvent("Agent not found"));
           ws.close();
           return;
         }
 
-        agent.addWebsocket(ws);
+        agent.addClient(ws);
 
-        const initMessage: WsOutgoingMessage = {
-          type: "init",
-          state: agent.getState(),
-          steps: agent.getAllSteps(),
-          headId: agent.getHead(),
-          operatorResults: getOperatorResultSummaries(agent),
-        };
-        ws.send(JSON.stringify(initMessage));
+        sendEventToClient(ws, new WsServerSnapshotEvent(agent.getState(), agent.getAllSteps(), agent.getHead()));
       },
 
       async message(ws, messageData) {
@@ -519,65 +467,76 @@ export function buildApp() {
         const agent = agentStore.get(agentId);
 
         if (!agent) {
-          ws.send(JSON.stringify({ type: "error", error: "Agent not found" }));
+          sendEventToClient(ws, new WsServerErrorEvent("Agent not found"));
           return;
         }
 
-        let msg: WsMessage;
+        let msg: WsClientCommand;
         try {
-          msg = typeof messageData === "string" ? JSON.parse(messageData) : (messageData as WsMessage);
+          msg = typeof messageData === "string" ? JSON.parse(messageData) : (messageData as WsClientCommand);
         } catch {
-          ws.send(JSON.stringify({ type: "error", error: "Invalid message format" }));
+          sendEventToClient(ws, new WsServerErrorEvent("Invalid message format"));
           return;
         }
 
-        if (msg.type === "stop") {
-          agent.stop();
-          broadcastToAgent(agentId, { type: "state", state: "STOPPING" });
-          return;
-        }
+        switch (msg.type) {
+          case "WsClientStopCommand":
+            agent.stop();
+            broadcastToAgentClients(agentId, new WsServerStatusEvent(AgentState.STOPPING));
+            return;
 
-        if (msg.type === "message") {
-          if (!msg.content || typeof msg.content !== "string") {
-            ws.send(JSON.stringify({ type: "error", error: "Message content is required" }));
+          case "WsClientPromptCommand": {
+            if (!msg.content || typeof msg.content !== "string") {
+              sendEventToClient(ws, new WsServerErrorEvent("Message content is required"));
+              return;
+            }
+
+            wsLog.info({ agentId, preview: msg.content.substring(0, 50) }, "received command");
+
+            // The prompt carries the workspace's current warehouse pick, so a run
+            // uses what the user has selected now rather than whatever was
+            // selected when the agent was created. An absent field IS the
+            // current selection — none — so it clears a previous pick rather
+            // than leaving a stale id to be sent (and refused while the feature
+            // is off) forever (#7751).
+            agent.setDelegateWarehouse(typeof msg.warehouseId === "number" ? msg.warehouseId : undefined);
+
+            agent.setStepCallback((step: ReActStep) => {
+              broadcastToAgentClients(agentId, new WsServerStepEvent(step));
+            });
+
+            broadcastToAgentClients(agentId, new WsServerStatusEvent(AgentState.GENERATING));
+
+            try {
+              const result = await agent.sendMessage(msg.content, msg.messageSource);
+
+              agent.setStepCallback(null);
+
+              const allSteps = agent.getReActSteps();
+              const lastStep = allSteps[allSteps.length - 1];
+              if (lastStep && lastStep.isEnd) {
+                broadcastToAgentClients(agentId, new WsServerStepEvent(lastStep));
+              }
+
+              wsLog.info({ agentId, steps: result.messages.length }, "agent run complete");
+            } catch (error: any) {
+              agent.setStepCallback(null);
+              broadcastToAgentClients(agentId, new WsServerErrorEvent(error.message));
+            } finally {
+              // The run is over (success or failure) and TexeraAgent.sendMessage has
+              // reset the agent to its resting state (AVAILABLE) in its own finally.
+              // This status frame is the run-end signal (it also unsticks the client
+              // from GENERATING after errors).
+              broadcastToAgentClients(agentId, new WsServerStatusEvent(agent.getState()));
+            }
             return;
           }
 
-          wsLog.info({ agentId, preview: msg.content.substring(0, 50) }, "received message");
-
-          agent.setStepCallback((step: ReActStep) => {
-            const hasToolCalls = step.toolCalls && step.toolCalls.length > 0;
-            broadcastToAgent(agentId, {
-              type: "step",
-              step,
-              ...(hasToolCalls ? { operatorResults: getOperatorResultSummaries(agent) } : {}),
-            });
-          });
-
-          broadcastToAgent(agentId, { type: "state", state: "GENERATING" });
-
-          try {
-            const result = await agent.sendMessage(msg.content, msg.messageSource);
-
-            agent.setStepCallback(null);
-
-            const allSteps = agent.getReActSteps();
-            const lastStep = allSteps[allSteps.length - 1];
-            if (lastStep && lastStep.isEnd) {
-              broadcastToAgent(agentId, { type: "step", step: lastStep });
-            }
-
-            broadcastToAgent(agentId, {
-              type: "complete",
-              state: agent.getState(),
-              operatorResults: getOperatorResultSummaries(agent),
-            });
-
-            wsLog.info({ agentId, steps: result.messages.length }, "agent run complete");
-          } catch (error: any) {
-            agent.setStepCallback(null);
-            broadcastToAgent(agentId, { type: "error", error: error.message });
-          }
+          default:
+            // Frames are parsed from untrusted JSON; reject unknown discriminators
+            // explicitly instead of silently no-op'ing, so client/server mismatches
+            // are easy to diagnose.
+            sendEventToClient(ws, new WsServerErrorEvent(`Unknown message type: ${(msg as { type?: unknown }).type}`));
         }
       },
 
@@ -587,7 +546,7 @@ export function buildApp() {
 
         const agent = agentStore.get(agentId);
         if (agent) {
-          agent.removeWebsocket(ws);
+          agent.removeClient(ws);
         }
       },
     })
@@ -603,6 +562,12 @@ export function buildApp() {
 export function _resetAgentStoreForTests(): void {
   agentStore.clear();
   agentCounter = 0;
+}
+
+// Look up an agent instance by id. Used by tests to stub agent behavior (e.g.
+// `sendMessage`) when exercising the WebSocket handlers.
+export function _getAgentForTests(agentId: string): TexeraAgent | undefined {
+  return agentStore.get(agentId);
 }
 
 function printStartupMessage(app: ReturnType<typeof buildApp>) {
@@ -630,9 +595,11 @@ function printStartupMessage(app: ReturnType<typeof buildApp>) {
     for (const route of wsRoutes) {
       console.log(`  WS     ${route.path}`);
     }
-    console.log("         Send: { type: 'message', content: '...' }");
-    console.log("         Send: { type: 'stop' }");
-    console.log("         Recv: { type: 'step' | 'state' | 'complete' | 'error' | 'init', ... }");
+    console.log("         Send: { type: 'WsClientPromptCommand', content: '...' }");
+    console.log("         Send: { type: 'WsClientStopCommand' }");
+    console.log(
+      "         Recv: { type: 'WsServerSnapshotEvent' | 'WsServerStepEvent' | 'WsServerStatusEvent' | 'WsServerErrorEvent', ... }"
+    );
   }
 
   console.log("");
@@ -665,6 +632,4 @@ export async function start() {
 
 // Run the server only when this file is the entry point, not when it is
 // imported by tests or other modules.
-if (import.meta.main) {
-  start();
-}
+if (import.meta.main) start();

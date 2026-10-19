@@ -37,9 +37,13 @@ import { AdminUserService } from "../../../service/admin/user/admin-user.service
 import { MilliSecond, Role, User } from "../../../../common/type/user";
 import { UserService } from "../../../../common/service/user/user.service";
 import { UserQuotaComponent } from "../../user/user-quota/user-quota.component";
+import { FeedbackComponent } from "../../user/feedback/feedback.component";
+import { FeedbackService } from "../../../service/user/feedback/feedback.service";
+import { NzBadgeComponent } from "ng-zorro-antd/badge";
 import { GuiConfigService } from "../../../../common/service/gui-config.service";
 import { replaceOneImmutable } from "../../../../common/util/array-utils";
 import { NzCardComponent } from "ng-zorro-antd/card";
+import { NzTagComponent } from "ng-zorro-antd/tag";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzDropdownMenuComponent } from "ng-zorro-antd/dropdown";
@@ -59,6 +63,7 @@ import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
   styleUrls: ["./admin-user.component.scss"],
   imports: [
     NzCardComponent,
+    NzTagComponent,
     NzTableComponent,
     NzTheadComponent,
     NzTrDirective,
@@ -82,6 +87,7 @@ import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
     NzSelectComponent,
     NzOptionComponent,
     NzTooltipDirective,
+    NzBadgeComponent,
     DatePipe,
   ],
 })
@@ -101,6 +107,7 @@ export class AdminUserComponent implements OnInit {
   commentSearchVisible = false;
   listOfDisplayUser = [...this.userList];
   currentUid: number | undefined = 0;
+  feedbackCounts = new Map<number, number>();
 
   @ViewChild("nameInput") nameInputRef?: ElementRef<HTMLInputElement>;
   @ViewChild("emailInput") emailInputRef?: ElementRef<HTMLInputElement>;
@@ -111,7 +118,8 @@ export class AdminUserComponent implements OnInit {
     private userService: UserService,
     private modalService: NzModalService,
     private messageService: NzMessageService,
-    private config: GuiConfigService
+    private config: GuiConfigService,
+    private feedbackService: FeedbackService
   ) {
     this.currentUid = this.userService.getCurrentUser()?.uid;
   }
@@ -124,6 +132,30 @@ export class AdminUserComponent implements OnInit {
         this.userList = userList;
         this.reset();
       });
+    this.loadFeedbackCounts();
+  }
+
+  loadFeedbackCounts(): void {
+    this.feedbackService
+      .getFeedbackCounts()
+      .pipe(untilDestroyed(this))
+      .subscribe(counts => {
+        this.feedbackCounts = new Map(counts.map(c => [c.uid, c.count]));
+      });
+  }
+
+  getFeedbackCount(uid: number): number {
+    return this.feedbackCounts.get(uid) ?? 0;
+  }
+
+  clickToViewFeedbacks(uid: number): void {
+    this.modalService.create({
+      nzContent: FeedbackComponent,
+      nzData: { uid: uid },
+      nzFooter: null,
+      nzWidth: "60%",
+      nzCentered: true,
+    });
   }
 
   public updateRole(user: User, role: Role): void {
@@ -212,24 +244,28 @@ export class AdminUserComponent implements OnInit {
     this.editAttribute = "";
   }
 
-  public sortByID: NzTableSortFn<User> = (a: User, b: User) => b.uid - a.uid;
+  // NzTableSortFn must order ascending: nz-table applies the result as-is for the 'ascend' sort
+  // order and negates it for 'descend'. Reversing the operands here would render the column
+  // backwards under the up caret.
+  public sortByID: NzTableSortFn<User> = (a: User, b: User) => a.uid - b.uid;
+
   public sortByName: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = (b.name || "").localeCompare(a.name || "");
+    const compare = (a.name || "").localeCompare(b.name || "");
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
   public sortByEmail: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = (b.email || "").localeCompare(a.email || "");
+    const compare = (a.email || "").localeCompare(b.email || "");
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
   public sortByComment: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = (b.comment || "").localeCompare(a.comment || "");
+    const compare = (a.comment || "").localeCompare(b.comment || "");
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
   public sortByRole: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = b.role.localeCompare(a.role);
+    const compare = a.role.localeCompare(b.role);
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
@@ -239,12 +275,12 @@ export class AdminUserComponent implements OnInit {
   };
 
   public sortByAffiliation: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = (b.affiliation || "").localeCompare(a.affiliation || "");
+    const compare = (a.affiliation || "").localeCompare(b.affiliation || "");
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
   public sortByJoiningReason: NzTableSortFn<User> = (a: User, b: User) => {
-    const compare = (b.joiningReason || "").localeCompare(a.joiningReason || "");
+    const compare = (a.joiningReason || "").localeCompare(b.joiningReason || "");
     return compare === 0 ? a.uid - b.uid : compare;
   };
 
@@ -258,20 +294,38 @@ export class AdminUserComponent implements OnInit {
     this.listOfDisplayUser = [...this.userList];
   }
 
+  private trimSearchValue(value: string | null | undefined): string {
+    return (value ?? "").trim();
+  }
+
   searchByName(): void {
     this.nameSearchVisible = false;
-    const q = (this.nameSearchValue ?? "").trim().toLowerCase();
-    this.listOfDisplayUser = this.userList.filter(u => (u.name ?? "").toLowerCase().includes(q));
+    this.nameSearchValue = this.trimSearchValue(this.nameSearchValue);
+    this.emailSearchValue = "";
+    this.commentSearchValue = "";
+
+    const q = this.nameSearchValue.toLowerCase();
+    this.listOfDisplayUser = this.userList.filter(user => (user.name ?? "").toLowerCase().includes(q));
   }
 
   searchByEmail(): void {
     this.emailSearchVisible = false;
-    this.listOfDisplayUser = this.userList.filter(user => (user.email || "").indexOf(this.emailSearchValue) !== -1);
+    this.emailSearchValue = this.trimSearchValue(this.emailSearchValue);
+    this.nameSearchValue = "";
+    this.commentSearchValue = "";
+
+    const q = this.emailSearchValue.toLowerCase();
+    this.listOfDisplayUser = this.userList.filter(user => (user.email ?? "").toLowerCase().includes(q));
   }
 
   searchByComment(): void {
     this.commentSearchVisible = false;
-    this.listOfDisplayUser = this.userList.filter(user => (user.comment || "").indexOf(this.commentSearchValue) !== -1);
+    this.commentSearchValue = this.trimSearchValue(this.commentSearchValue);
+    this.nameSearchValue = "";
+    this.emailSearchValue = "";
+
+    const q = this.commentSearchValue.toLowerCase();
+    this.listOfDisplayUser = this.userList.filter(user => (user.comment ?? "").toLowerCase().includes(q));
   }
 
   clickToViewQuota(uid: number) {
@@ -302,6 +356,9 @@ export class AdminUserComponent implements OnInit {
     return user.accountCreation * 1000;
   }
 
+  // Active-before-inactive IS this column's ascending order, so the up caret surfaces the users
+  // who are online now. Unlike the columns above there is no natural A-to-Z to reverse here: the
+  // key is a boolean, and ranking active first is what makes the first click useful.
   sortByActive: NzTableSortFn<User> = (a: User, b: User) => {
     const aActive = this.isUserActive(a);
     const bActive = this.isUserActive(b);
