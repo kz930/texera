@@ -84,6 +84,8 @@ export const MAIN_CANVAS = {
 export const RESULT_PREVIEW_DELAY_MS = 500;
 /** How long the card stays after the pointer leaves, so the pointer can move into it. */
 export const RESULT_PREVIEW_HIDE_MS = 200;
+/** The height of a pinned window's header, where the line from its operator comes in. */
+const PINNED_HEADER_HEIGHT = 30;
 
 /** Whether a mouse button is down. JointJS hands over a jQuery event, which keeps the DOM one inside. */
 function isButtonHeld(evt: unknown): boolean {
@@ -719,6 +721,50 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   public pinnedResultPosition(pinned: { operatorId: string; dx: number; dy: number }): { x: number; y: number } {
     const anchor = this.operatorAnchor(pinned.operatorId);
     return { x: anchor.x + pinned.dx, y: anchor.y + pinned.dy };
+  }
+
+  /**
+   * The line from an operator to its pinned window, a curve like the links between operators.
+   * Beside the operator, it runs side to side into the window's header; above or below, it runs
+   * from the operator's top or bottom to the window's nearest edge.
+   */
+  public pinnedConnectorPath(pinned: { operatorId: string; dx: number; dy: number }): string {
+    const cell = this.paper.getModelById(pinned.operatorId);
+    if (!cell) return "";
+    const bbox = cell.getBBox();
+    const scale = this.paper.scale();
+    const translate = this.paper.translate();
+    const op = {
+      left: bbox.x * scale.sx + translate.tx,
+      right: (bbox.x + bbox.width) * scale.sx + translate.tx,
+      top: bbox.y * scale.sy + translate.ty,
+      bottom: (bbox.y + bbox.height) * scale.sy + translate.ty,
+    };
+    const midX = (op.left + op.right) / 2;
+    const midY = (op.top + op.bottom) / 2;
+
+    const corner = this.pinnedResultPosition(pinned);
+    const size = this.pinnedWindowSize(pinned.operatorId);
+    const win = { left: corner.x, right: corner.x + size.width, top: corner.y, bottom: corner.y + size.height };
+    const headerY = win.top + PINNED_HEADER_HEIGHT / 2;
+
+    const curve = (x1: number, y1: number, x2: number, y2: number, horizontal: boolean) => {
+      const bend = Math.max(30, (horizontal ? Math.abs(x2 - x1) : Math.abs(y2 - y1)) / 2);
+      const [bx, by] = horizontal ? [Math.sign(x2 - x1) * bend, 0] : [0, Math.sign(y2 - y1) * bend];
+      return `M ${x1} ${y1} C ${x1 + bx} ${y1 + by}, ${x2 - bx} ${y2 - by}, ${x2} ${y2}`;
+    };
+    if (win.left >= op.right) return curve(op.right, midY, win.left, headerY, true);
+    if (win.right <= op.left) return curve(op.left, midY, win.right, headerY, true);
+    // the window overlaps the operator's column: join the facing edges, at the point under the operator
+    const x = Math.min(Math.max(midX, win.left + 12), win.right - 12);
+    return win.top >= op.bottom ? curve(midX, op.bottom, x, win.top, false) : curve(midX, op.top, x, win.bottom, false);
+  }
+
+  /** A pinned window's size as drawn: the user can resize it, so it is read from the page. */
+  private pinnedWindowSize(operatorId: string): { width: number; height: number } {
+    const host = this.elementRef.nativeElement as HTMLElement;
+    const box = host.querySelector<HTMLElement>(`[data-operator-id="${operatorId}"] .pinned-result`);
+    return { width: box?.offsetWidth ?? 0, height: box?.offsetHeight ?? 0 };
   }
 
   /** Just right of the operator's box, level with its top, in the editor's coordinates. */
