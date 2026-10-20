@@ -355,6 +355,8 @@ describe("OperatorPaginationResultService", () => {
           pageIndex: 1,
           table: testTable,
           schema: testSchema,
+          portIndex: 0,
+          totalTuples: testTable.length,
         })
       );
 
@@ -382,6 +384,8 @@ describe("OperatorPaginationResultService", () => {
           pageIndex: 1,
           table: testTable,
           schema: testSchema,
+          portIndex: 0,
+          totalTuples: testTable.length,
         })
       );
 
@@ -430,6 +434,8 @@ describe("OperatorPaginationResultService", () => {
         pageIndex: 3,
         table: [{ id: 7 }],
         schema: [{ attributeName: "id", attributeType: "integer" }],
+        portIndex: 0,
+        totalTuples: 1,
       };
       eventSubject.next(page);
 
@@ -480,6 +486,8 @@ describe("OperatorPaginationResultService", () => {
         pageIndex: 1,
         table: [{ id: 1 }],
         schema: [{ attributeName: "id", attributeType: "integer" }],
+        portIndex: 0,
+        totalTuples: 1,
       };
       eventSubject.next(page);
 
@@ -539,7 +547,15 @@ describe("OperatorPaginationResultService", () => {
         .value as unknown as Subject<PaginatedResultEvent>;
       const schema: SchemaAttribute[] = [{ attributeName: "name", attributeType: "string" }];
 
-      eventSubject.next({ requestID: "no-such-request", operatorID: "testOperator", pageIndex: 1, table: [], schema });
+      eventSubject.next({
+        requestID: "no-such-request",
+        operatorID: "testOperator",
+        pageIndex: 1,
+        table: [],
+        schema,
+        portIndex: 0,
+        totalTuples: 0,
+      });
 
       expect(service.getSchema()).toEqual(schema);
     });

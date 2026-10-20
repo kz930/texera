@@ -69,6 +69,8 @@ describe("ResultTableFrameComponent", () => {
     pageIndex,
     table,
     schema: [],
+    portIndex: 0,
+    totalTuples: table.length,
   });
 
   // Installs a paginated-result-service double behind WorkflowResultService.getPaginatedResultService.
