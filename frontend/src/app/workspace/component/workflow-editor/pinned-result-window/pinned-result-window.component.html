@@ -17,7 +17,9 @@
  under the License.
 -->
 
-<div class="pinned-result">
+<div
+  #window
+  class="pinned-result">
   <div
     class="pinned-result__header"
     (mousedown)="startDrag($event)">
@@ -56,7 +58,8 @@
     <texera-result-table-frame
       *ngIf="kind === 'table'"
       [operatorId]="operatorId"
-      [portIndex]="selectedPort"></texera-result-table-frame>
+      [portIndex]="selectedPort"
+      [containerHeight]="windowHeight"></texera-result-table-frame>
     <texera-visualization-panel-content
       *ngIf="kind === 'chart'"
       [operatorId]="operatorId"></texera-visualization-panel-content>

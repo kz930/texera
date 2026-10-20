@@ -36,6 +36,7 @@ import { OperatorPredicate, PortDescription } from "../../../types/workflow-comm
 class StubTableFrame {
   @Input() operatorId?: string;
   @Input() portIndex = 0;
+  @Input() containerHeight?: number;
 }
 
 @Component({ selector: "texera-visualization-panel-content", template: "", standalone: true })
@@ -119,6 +120,14 @@ describe("PinnedResultWindowComponent", () => {
     expect(table().operatorId).toBe("op1");
     expect(tabs()[1].attributes["aria-selected"]).toBe("true");
     expect(tabs()[0].attributes["aria-selected"]).toBe("false");
+  });
+
+  it("hands the table its own height to fill, not the result panel's", () => {
+    fixture.detectChanges();
+    fixture.componentInstance.windowHeight = 480;
+    fixture.detectChanges();
+
+    expect(table().containerHeight).toBe(480);
   });
 
   it("shows no port tabs when the result is not a table", () => {

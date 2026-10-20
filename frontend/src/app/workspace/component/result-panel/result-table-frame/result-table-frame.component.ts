@@ -41,6 +41,7 @@ import { RowModalComponent } from "../result-panel-modal.component";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { DomSanitizer, SafeHtml } from "@angular/platform-browser";
 import { isAudioUrl, isVideoUrl, isImageUrl } from "../../../../common/util/media-type.util";
+import { isDefined } from "../../../../common/util/predicate";
 import { ResultExportationComponent } from "../../result-exportation/result-exportation.component";
 import { WorkflowStatusService } from "../../../service/workflow-status/workflow-status.service";
 import { GuiConfigService } from "../../../../common/service/gui-config.service";
@@ -94,6 +95,9 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
   // which of the operator's output ports to show. The running execution reports only on the first,
   // so another port is read when shown, and its counts and statistics are not followed live.
   @Input() portIndex = 0;
+  // The height of the window the table fills, header included, as the result panel's height is.
+  // Left out, the table fills the result panel and follows its height.
+  @Input() containerHeight?: number;
 
   // display result table
   currentColumns?: TableColumn[];
@@ -149,7 +153,10 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
   ) {}
 
   ngOnChanges(changes: SimpleChanges): void {
+    if (isDefined(this.containerHeight)) this.fitPageSize(this.containerHeight);
     if (changes.operatorId) this.operatorId = changes.operatorId.currentValue;
+    // A new height alone only resizes the page, as dragging the result panel's edge does.
+    if (Object.keys(changes).every(key => key === "containerHeight")) return;
     if (this.operatorId) {
       const paginatedResultService = this.paginatedResultService();
       if (paginatedResultService) {
@@ -227,12 +234,9 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
       });
 
     this.resizeService.currentSize.pipe(untilDestroyed(this)).subscribe(size => {
-      this.panelHeight = size.height;
-      this.adjustPageSizeBasedOnPanelSize(size.height);
-      let currentPageNum: number = Math.ceil(this.totalNumTuples / this.pageSize);
-      while (this.currentPageIndex > currentPageNum && this.currentPageIndex > 1) {
-        this.currentPageIndex -= 1;
-      }
+      // a table given its own height to fill does not follow the result panel's
+      if (isDefined(this.containerHeight)) return;
+      this.fitPageSize(size.height);
     });
 
     if (this.operatorId) {
@@ -313,6 +317,16 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
    *
    * @param panelHeight - The total height (in pixels) of the results panel.
    */
+  /** As many rows to a page as fill the height, keeping the page within the result. */
+  private fitPageSize(height: number): void {
+    this.panelHeight = height;
+    this.adjustPageSizeBasedOnPanelSize(height);
+    let currentPageNum: number = Math.ceil(this.totalNumTuples / this.pageSize);
+    while (this.currentPageIndex > currentPageNum && this.currentPageIndex > 1) {
+      this.currentPageIndex -= 1;
+    }
+  }
+
   private adjustPageSizeBasedOnPanelSize(panelHeight: number) {
     const TABLE_HEADER_HEIGHT = 38.62;
     const PANEL_HEADER_HEIGHT = 64.27; // Includes panel title and tab bar

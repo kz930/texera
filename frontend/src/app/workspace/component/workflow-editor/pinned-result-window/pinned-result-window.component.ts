@@ -17,7 +17,17 @@
  * under the License.
  */
 
-import { Component, EventEmitter, Input, Output } from "@angular/core";
+import {
+  AfterViewInit,
+  ChangeDetectorRef,
+  Component,
+  ElementRef,
+  EventEmitter,
+  Input,
+  OnDestroy,
+  Output,
+  ViewChild,
+} from "@angular/core";
 import { NgFor, NgIf } from "@angular/common";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
@@ -44,15 +54,37 @@ import { OperatorResultPreviewComponent } from "../operator-result-preview/opera
     OperatorResultPreviewComponent,
   ],
 })
-export class PinnedResultWindowComponent {
+export class PinnedResultWindowComponent implements AfterViewInit, OnDestroy {
   @Input() operatorId = "";
   @Output() closed = new EventEmitter<void>();
   @Output() moved = new EventEmitter<{ dx: number; dy: number }>();
+  @ViewChild("window") windowElement?: ElementRef<HTMLElement>;
+
+  /** The window's height as drawn. The table fills it, as it filled the result panel. */
+  windowHeight?: number;
+  private resizeObserver?: ResizeObserver;
 
   constructor(
     private workflowActionService: WorkflowActionService,
-    private workflowResultService: WorkflowResultService
+    private workflowResultService: WorkflowResultService,
+    private changeDetectorRef: ChangeDetectorRef
   ) {}
+
+  ngAfterViewInit(): void {
+    const element = this.windowElement?.nativeElement;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    // the user resizes the window by its corner, so its height is read as it changes
+    this.resizeObserver = new ResizeObserver(() => {
+      if (element.offsetHeight === this.windowHeight) return;
+      this.windowHeight = element.offsetHeight;
+      this.changeDetectorRef.detectChanges();
+    });
+    this.resizeObserver.observe(element);
+  }
+
+  ngOnDestroy(): void {
+    this.resizeObserver?.disconnect();
+  }
 
   get title(): string {
     const graph = this.workflowActionService.getTexeraGraph();

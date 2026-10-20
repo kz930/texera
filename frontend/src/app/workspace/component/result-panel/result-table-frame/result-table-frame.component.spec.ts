@@ -570,6 +570,24 @@ describe("ResultTableFrameComponent", () => {
       expect(component.pageSize).toBe(1);
       expect(component.currentPageIndex).toBe(3);
     });
+
+    // A table in a pinned window fills that window, the way it filled the result panel.
+    it("fills the height it is given instead of the result panel's, by the same rule", () => {
+      component.totalNumTuples = 30;
+      const paginated = makePaginatedResultService();
+      component.operatorId = "op1";
+      component.containerHeight = 700;
+
+      component.ngOnChanges({ containerHeight: new SimpleChange(undefined, 700, false) });
+
+      // the same 700 the result panel was given above, so the same 11 rows
+      expect(component.pageSize).toBe(11);
+      // a new height alone resizes the page; the table asks for the rows itself, as on a panel resize
+      expect(paginated.selectPage).not.toHaveBeenCalled();
+
+      resizeService.changePanelSize(800, 300);
+      expect(component.pageSize).toBe(11);
+    });
   });
 
   describe("onTableQueryParamsChange", () => {
