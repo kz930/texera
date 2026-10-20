@@ -18,7 +18,7 @@
  */
 
 import { Component, EventEmitter, Input, Output } from "@angular/core";
-import { NgIf } from "@angular/common";
+import { NgFor, NgIf } from "@angular/common";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { WorkflowResultService } from "../../../service/workflow-result/workflow-result.service";
@@ -37,6 +37,7 @@ import { OperatorResultPreviewComponent } from "../operator-result-preview/opera
   styleUrls: ["./pinned-result-window.component.scss"],
   imports: [
     NgIf,
+    NgFor,
     NzIconDirective,
     ResultTableFrameComponent,
     VisualizationFrameContentComponent,
@@ -58,6 +59,18 @@ export class PinnedResultWindowComponent {
     if (!graph.hasOperator(this.operatorId)) return this.operatorId;
     const operator = graph.getOperator(this.operatorId);
     return operator.customDisplayName ?? operator.operatorType;
+  }
+
+  /** The output port whose result is shown. */
+  selectedPort = 0;
+
+  /** The operator's output ports, each named as on the canvas, or by its place when unnamed. */
+  get outputPorts(): { index: number; label: string }[] {
+    const graph = this.workflowActionService.getTexeraGraph();
+    if (!graph.hasOperator(this.operatorId)) return [];
+    return graph
+      .getOperator(this.operatorId)
+      .outputPorts.map((port, index) => ({ index, label: port.displayName || `Output ${index + 1}` }));
   }
 
   get kind(): "table" | "chart" | "other" {

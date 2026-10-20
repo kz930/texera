@@ -138,6 +138,23 @@ describe("OperatorResultPreviewComponent", () => {
     expect(preview.moreColumns).toBe(4);
   });
 
+  it("says the rows are the first output's when the operator has several", () => {
+    const split = "split-op";
+    TestBed.inject(WorkflowActionService).addOperator(
+      {
+        ...mockScanPredicate,
+        operatorID: split,
+        outputPorts: [{ portID: "output-0" }, { portID: "output-1" }],
+      },
+      mockPoint
+    );
+    component.operatorId = split;
+    withRows(10);
+    withColumns(2);
+
+    expect(component.preview.summary).toBe("10 rows · 2 columns · first of 2 outputs");
+  });
+
   it("says a chart was drawn for a result that is not a table", () => {
     vi.spyOn(resultService, "hasResult").mockReturnValue(true);
 

@@ -136,12 +136,15 @@ export class OperatorResultPreviewComponent implements OnChanges {
     if (paginated) {
       const columns = this.outputColumns(id);
       const rows = paginated.getCurrentTotalNumTuples();
+      // The preview is of the first output port; the pinned window has a tab for each.
+      const outputCount = operator?.outputPorts.length ?? 1;
       return {
         ...base,
         kind: "table",
-        summary: `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"} · ${columns.length} ${
-          columns.length === 1 ? "column" : "columns"
-        }`,
+        summary:
+          `${rows.toLocaleString()} ${rows === 1 ? "row" : "rows"} · ${columns.length} ${
+            columns.length === 1 ? "column" : "columns"
+          }` + (outputCount > 1 ? ` · first of ${outputCount} outputs` : ""),
         columns: columns.slice(0, PREVIEW_COLUMN_LIMIT),
         moreColumns: Math.max(0, columns.length - PREVIEW_COLUMN_LIMIT),
       };
