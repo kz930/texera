@@ -115,6 +115,8 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
 
   // The operator each shown message came from, for its tag when every operator's messages are shown.
   private messageOperator = new Map<ConsoleMessage, string>();
+  // the console message made for each error that stopped the run or the compilation
+  private fatalErrorRows = new WeakMap<WorkflowFatalError, OperatorConsoleMessage>();
 
   // Message types the user has switched off. Absent from the set means visible,
   // so a type the console has never seen before is shown rather than hidden.
@@ -375,18 +377,25 @@ export class ConsoleFrameComponent implements OnInit, OnChanges {
       ...Object.values(this.workflowCompilingService.getWorkflowCompilationErrors()),
     ];
     return errors.map(error => {
-      const shouldFormat = error.type.name === "COMPILATION_ERROR" || error.type.name === "EXECUTION_FAILURE";
-      return {
-        operatorId: error.operatorId,
-        message: {
-          workerId: error.workerId,
-          timestamp: error.timestamp,
-          msgType: { name: "ERROR" },
-          source: error.type.name,
-          title: shouldFormat ? readableError(error.message) : error.message,
-          message: shouldFormat ? readableError(error.details) : error.details,
-        },
-      };
+      // The same error gives the same message on every render. A new one each time would read as
+      // a message just arrived, and the list would jump to its end while the user scrolls up.
+      let row = this.fatalErrorRows.get(error);
+      if (!row) {
+        const shouldFormat = error.type.name === "COMPILATION_ERROR" || error.type.name === "EXECUTION_FAILURE";
+        row = {
+          operatorId: error.operatorId,
+          message: {
+            workerId: error.workerId,
+            timestamp: error.timestamp,
+            msgType: { name: "ERROR" },
+            source: error.type.name,
+            title: shouldFormat ? readableError(error.message) : error.message,
+            message: shouldFormat ? readableError(error.details) : error.details,
+          },
+        };
+        this.fatalErrorRows.set(error, row);
+      }
+      return row;
     });
   }
 }

@@ -616,6 +616,33 @@ describe("ConsoleFrameComponent", () => {
       flush();
     }));
 
+    // The error that failed the run is turned into a console message on every render. Unless it is
+    // the same message each time, the list takes it for a new one and jumps to its end.
+    it("stays where it is on a re-render while the run's error has not changed", fakeAsync(() => {
+      const fatal = {
+        message: "B broke",
+        details: "",
+        operatorId: "op1",
+        workerId: "w-1",
+        type: { name: "EXECUTION_FAILURE" },
+        timestamp: { nanos: 0, seconds: 5 },
+      };
+      getErrorMessages.mockReturnValue([fatal]);
+      getConsoleMessages.mockReturnValue([withBody]);
+      component.displayConsoleMessages("op1");
+      tick();
+      fixture.detectChanges();
+
+      const scrolled = watchScroll(fixture);
+
+      component.displayConsoleMessages("op1");
+      tick();
+      fixture.detectChanges();
+
+      expect(scrolled()).toBe(false);
+      flush();
+    }));
+
     it("does not render the debug input group when console input is disabled", () => {
       component.consoleInputEnabled = false;
       fixture.detectChanges();
