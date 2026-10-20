@@ -118,6 +118,14 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
   panelHeight = 0;
   tableStats: Record<string, Record<string, number>> = {};
   prevTableStats: Record<string, Record<string, number>> = {};
+
+  /**
+   * Whether any column has statistics to show. Until they arrive there are none, and an output
+   * port past the first never has any, as the statistics are the first port's.
+   */
+  get hasTableStats(): boolean {
+    return Object.keys(this.tableStats).length > 0;
+  }
   widthPercent: string = "";
   isOperatorFinished: boolean = false;
 

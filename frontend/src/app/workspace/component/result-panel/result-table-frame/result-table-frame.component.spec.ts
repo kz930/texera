@@ -772,6 +772,20 @@ describe("ResultTableFrameComponent", () => {
       expect(fixture.nativeElement.querySelector(".result-table").hidden).toBe(true);
     });
 
+    // Statistics come only with the first output port, and only once they arrive; an empty row of
+    // them would be a grey bar with nothing in it.
+    it("renders no statistics row while no column has statistics", () => {
+      component.operatorId = "op1";
+      component.setupResultTable([SAMPLE_ROW], 1);
+      component.isFrontPagination = false;
+      component.tableStats = {};
+      component.prevTableStats = {};
+      fixture.detectChanges();
+
+      expect(fixture.nativeElement.querySelector(".result-table").hidden).toBe(false);
+      expect(fixture.nativeElement.querySelector(".custom-stats-row")).toBeNull();
+    });
+
     it("renders headers, per-column stats, and clickable row cells once results arrive", () => {
       // The download click below needs a rendered button, and the button is gated on the switch.
       setExport(true);
