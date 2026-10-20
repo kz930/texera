@@ -478,7 +478,7 @@ class ExecutionResultService(
     val storageUriOption = WorkflowExecutionsResource.getResultUriByLogicalPortId(
       latestExecutionId,
       OperatorIdentity(request.operatorID),
-      PortIdentity()
+      PortIdentity(request.portIndex)
     )
 
     // Refuse to read a per-user-warehouse result while the feature is off (#6930).
@@ -511,7 +511,12 @@ class ExecutionResultService(
         val attributes = paginationIterable.headOption
           .map(_.getSchema.getAttributes)
           .getOrElse(List.empty)
-        PaginatedResultEvent.apply(request, mappedResults, attributes)
+        PaginatedResultEvent.apply(
+          request,
+          mappedResults,
+          attributes,
+          virtualDocument.getCount.toInt
+        )
 
       case None =>
         // Handle the case when storageUri is empty

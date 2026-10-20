@@ -925,6 +925,32 @@ class ExecutionResultServiceSpec
     event.schema.map(_.getName) shouldBe List("c1", "c2")
   }
 
+  it should "read the output port the request names, and count that port's rows" in {
+    val executionId = newExecution()
+    val schema = new Schema(List(new Attribute("id", AttributeType.INTEGER)))
+    val rows = (n: Int, offset: Int) =>
+      (0 until n).map(i =>
+        Tuple.builder(schema).add("id", AttributeType.INTEGER, offset + i).build()
+      )
+    // Two output ports of one operator, as a Split keeps them, with different row counts.
+    storeResult(executionId, "erss-two-ports", schema, rows(2, 0))
+    storeResult(executionId, "erss-two-ports", schema, rows(5, 100), port = PortIdentity(1))
+
+    val first = paginate(paginationRequest.copy(operatorID = "erss-two-ports", pageSize = 10))
+    val second = paginate(
+      paginationRequest.copy(operatorID = "erss-two-ports", pageSize = 3, portIndex = 1)
+    )
+
+    // Without a port, the first one is read, as before.
+    first.table.map(_.get("id").asInt()) shouldBe List(0, 1)
+    first.portIndex shouldBe 0
+    first.totalTuples shouldBe 2
+    // The second port's rows, and its own count, which pages the port past this first page.
+    second.table.map(_.get("id").asInt()) shouldBe List(100, 101, 102)
+    second.portIndex shouldBe 1
+    second.totalTuples shouldBe 5
+  }
+
   it should "return an empty page when the operator has no stored result" in {
     newExecution()
 
