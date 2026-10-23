@@ -85,6 +85,8 @@ object StandaloneHelpers {
     *  - `_texera_java_text`: a value as Java's toString writes it.
     *  - `_texera_cast_string`: a column as text, decided by the column's type.
     *  - `_texera_cast_cells`: a cast applied cell by cell, reading nulls from the column's mask.
+    *  - `_texera_java_double`: Double.parseDouble, which also takes a d/f suffix and hex.
+    *  - `_texera_read_doubles`: a DOUBLE column pandas left as text, read the engine's way.
     */
   val AttributeCasts: String =
     """def _texera_cast_boolean(x):
@@ -297,11 +299,6 @@ object StandaloneHelpers {
       |
       |
       |def _texera_java_double(text):
-      |    # Double.parseDouble on the trimmed text, which a read field reaches
-      |    # through `toDouble`. It takes a trailing d or f as a type suffix and
-      |    # 0x...p... as a hex literal, both of which float() refuses. A hex
-      |    # literal too large for a double is an infinity in Java, where
-      |    # float.fromhex raises.
       |    text = text.strip()
       |    if text[-1:] in ("d", "D", "f", "F"):
       |        text = text[:-1]
@@ -314,11 +311,6 @@ object StandaloneHelpers {
       |
       |
       |def _texera_read_doubles(s):
-      |    # pandas leaves a DOUBLE column as text when a cell reads in Java and
-      |    # not as a plain float: "NaN", "2d", "0x1p3". Read those the engine's
-      |    # way. "NaN" is a value, and float64 reports a NaN as missing to every
-      |    # operator that reads the mask, so a column holding one goes into the
-      |    # nullable Float64, which keeps the empty cells alone null.
       |    import numpy as np
       |
       |    if pd.api.types.is_numeric_dtype(s):
