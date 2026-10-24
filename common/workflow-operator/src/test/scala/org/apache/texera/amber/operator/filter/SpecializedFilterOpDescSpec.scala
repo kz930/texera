@@ -108,7 +108,7 @@ class SpecializedFilterOpDescSpec extends AnyFlatSpec with Matchers {
       Map(PortIdentity() -> Schema().add(new Attribute("name", AttributeType.STRING)))
     // The declared type is found under the table's spelling too.
     d.generateStandaloneCode(inputSchemas) shouldBe
-      """out1df = in1df[_texera_filter_keep(in1df["name"], "=", "a", "STRING") | (in1df["name"].isna())].reset_index(drop=True)"""
+      """out1df = in1df[_texera_filter_keep_string(in1df["name"], "=", "a") | (in1df["name"].isna())].reset_index(drop=True)"""
   }
 
   // The executor filters on `predicates.exists`, which answers false on an empty
