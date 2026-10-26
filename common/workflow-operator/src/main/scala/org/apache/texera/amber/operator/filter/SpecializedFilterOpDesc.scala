@@ -133,10 +133,8 @@ object SpecializedFilterOpDesc {
     """def _texera_filter_text_key(s):
       |    return s.encode("utf-16-be", "surrogatepass")
       |
-      |
       |def _texera_filter_compared(left, right):
       |    return (left > right) - (left < right)
-      |
       |
       |def _texera_filter_rows(column, condition, order):
       |    passes = {
@@ -156,7 +154,6 @@ object SpecializedFilterOpDesc {
       |        dtype=bool,
       |    )
       |
-      |
       |def _texera_filter_keep_double(column, condition, value):
       |    target = _texera_double_key(_texera_java_double(value))
       |
@@ -164,7 +161,6 @@ object SpecializedFilterOpDesc {
       |        return _texera_filter_compared(_texera_double_key(float(v)), target)
       |
       |    return _texera_filter_rows(column, condition, order)
-      |
       |
       |def _texera_filter_keep_long(column, condition, value):
       |    target = _texera_parse_int(value, 64)
@@ -174,7 +170,6 @@ object SpecializedFilterOpDesc {
       |
       |    return _texera_filter_rows(column, condition, order)
       |
-      |
       |def _texera_filter_keep_boolean(column, condition, value):
       |    target = _texera_filter_text_key(_texera_java_trim(value).lower())
       |
@@ -182,7 +177,6 @@ object SpecializedFilterOpDesc {
       |        return _texera_filter_compared(_texera_filter_text_key("true" if v else "false"), target)
       |
       |    return _texera_filter_rows(column, condition, order)
-      |
       |
       |def _texera_filter_keep_timestamp(column, condition, value):
       |    zone = _texera_local_zone()
@@ -199,7 +193,6 @@ object SpecializedFilterOpDesc {
       |        return _texera_filter_compared(wall_clock(v), target)
       |
       |    return _texera_filter_rows(column, condition, order)
-      |
       |
       |def _texera_filter_keep_string(column, condition, value):
       |    try:
@@ -220,7 +213,6 @@ object SpecializedFilterOpDesc {
       |        )
       |
       |    return _texera_filter_rows(column, condition, order)
-      |
       |
       |def _texera_filter_keep(column, condition, value):
       |    dtype = column.dtype
