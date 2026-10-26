@@ -66,7 +66,6 @@ object StandaloneHelpers {
       |        return _texera_parse_int(text, 32) == 1
       |    return x != 0
       |
-      |
       |def _texera_parse_number(text):
       |    import re
       |
@@ -93,7 +92,6 @@ object StandaloneHelpers {
       |        return high
       |    return int(value)
       |
-      |
       |def _texera_cast_integral(x):
       |    if isinstance(x, str):
       |        x, is_double = _texera_parse_number(x)
@@ -104,7 +102,6 @@ object StandaloneHelpers {
       |    if isinstance(x, float):
       |        return _texera_saturate(x, -(2 ** 63), 2 ** 63 - 1)
       |    return int(x)
-      |
       |
       |def _texera_cast_int32(x, wrap):
       |    if isinstance(x, str):
@@ -147,7 +144,6 @@ object StandaloneHelpers {
       |    rest = s.notna() & out.isna()
       |    out[rest] = s[rest].map(_one).astype("datetime64[us]")
       |    return out
-      |
       |
       |def _texera_epoch_millis_to_timestamp(s):
       |    return _texera_local_wall_clocks(pd.to_datetime(s, unit="ms", errors="coerce", utc=True))
@@ -258,7 +254,6 @@ object StandaloneHelpers {
       |
       |    return pd.Series([one(i) for i in range(len(walls))], index=s.index, dtype="datetime64[ms]")
       |
-      |
       |def _texera_cast_double(x):
       |    return _texera_java_double(x) if isinstance(x, str) else float(x)
       |
@@ -294,10 +289,8 @@ object StandaloneHelpers {
       |        return ("-" if sign else "") + kept[0] + "." + (kept[1:] or "0") + "E" + str(power)
       |    return str(x)
       |
-      |
       |def _texera_java_trim(text):
       |    return text.strip("".join(map(chr, range(33))))
-      |
       |
       |def _texera_parse_int(text, bits):
       |    import re
@@ -307,7 +300,6 @@ object StandaloneHelpers {
       |    if not re.fullmatch(r"[+-]?\d+", text) or not -bound <= int(text) < bound:
       |        raise ValueError("For input string: " + repr(text))
       |    return int(text)
-      |
       |
       |def _texera_java_double(text):
       |    import re
@@ -329,14 +321,12 @@ object StandaloneHelpers {
       |    except OverflowError:
       |        return float("-inf") if text.startswith("-") else float("inf")
       |
-      |
       |def _texera_double_key(x):
       |    import math
       |
       |    if math.isnan(x):
       |        return (1, 0.0, 0.0)
       |    return (0, x, math.copysign(1.0, x))
-      |
       |
       |def _texera_key_codes(*frames, signed=False):
       |    import math
@@ -362,7 +352,6 @@ object StandaloneHelpers {
       |
       |    return [code(df) for df in frames]
       |
-      |
       |def _texera_read_doubles(s):
       |    import numpy as np
       |
@@ -376,7 +365,6 @@ object StandaloneHelpers {
       |    if np.isnan(values[~holes]).any():
       |        values = pd.arrays.FloatingArray(values, holes)
       |    return pd.Series(values, index=s.index, name=s.name)
-      |
       |
       |def _texera_cast_string(s):
       |    return _texera_cast_cells(s, _texera_java_text, None)
