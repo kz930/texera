@@ -301,9 +301,7 @@ object StandaloneHelpers {
       |
       |
       |def _texera_cast_double(x):
-      |    if isinstance(x, str):
-      |        return float(x.strip())
-      |    return float(x)
+      |    return _texera_java_double(x) if isinstance(x, str) else float(x)
       |
       |
       |def _texera_cast_doubles(s):
