@@ -484,8 +484,6 @@ export class ResultTableFrameComponent implements OnInit, OnChanges {
         ) {
           return;
         }
-        // an empty page keeps the rows shown, but the loading is over
-        if (pageData.table.length === 0) this.isLoadingResult = false;
         this.setupResultTable(pageData.table, paginatedResultService.getCurrentTotalNumTuples(), pageData.schema);
         this.changeDetectorRef.detectChanges();
         // the rows are drawn now, so a table in a window can measure what fits
