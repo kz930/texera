@@ -532,6 +532,16 @@
 <ng-template #workflowPythonScriptModal>
   <div class="workflow-python-modal">
     <div class="workflow-python-modal-toolbar">
+      <label class="workflow-python-helpers">
+        <nz-switch
+          [ngModel]="helpersFromPackage"
+          (ngModelChange)="onToggleHelpersFromPackage($event)"
+          [nzDisabled]="isTranslatingToPython"
+          nzSize="small">
+        </nz-switch>
+        <span>Import helpers from texera-support</span>
+        <code *ngIf="helpersFromPackage">pip install texera-support</code>
+      </label>
       <button
         nz-button
         title="copy Python script"
