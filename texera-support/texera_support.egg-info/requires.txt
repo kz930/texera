@@ -1,3 +1,0 @@
-pandas>=2.2
-python-dateutil
-tzlocal

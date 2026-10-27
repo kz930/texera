@@ -1,8 +1,0 @@
-README.md
-pyproject.toml
-texera_support/__init__.py
-texera_support.egg-info/PKG-INFO
-texera_support.egg-info/SOURCES.txt
-texera_support.egg-info/dependency_links.txt
-texera_support.egg-info/requires.txt
-texera_support.egg-info/top_level.txt
