@@ -312,6 +312,27 @@ class WorkflowToPythonTranslatorSpec extends AnyFlatSpec with Matchers {
     script should not include "_texera_unused"
   }
 
+  it should "import a packaged helper with the other imports rather than define it" in {
+    val source = upstream("source")
+    val python = pythonStub("python", "out1df = in1df.copy()")
+    val script = new WorkflowToPythonTranslator().translate(
+      LogicalPlan(List(source, python), List(link(source, python))),
+      helpersFromPackage = true
+    )
+    script should startWith(
+      "import pandas as pd\nfrom texera_support import _texera_python_operator_input\n\n"
+    )
+    script should not include "def _texera_python_operator_input"
+  }
+
+  it should "still define a helper the package does not hold" in {
+    val op = withHelper("op", sharedHelper, "out1df = in1df.apply(_texera_called)")
+    val script = new WorkflowToPythonTranslator()
+      .translate(LogicalPlan(List(op), List.empty), helpersFromPackage = true)
+    script should include("def _texera_called(x):")
+    script should not include "from texera_support"
+  }
+
   /** The translator's own contract when it meets an operator it cannot render:
     * a comment rather than a silently wrong line.
     */

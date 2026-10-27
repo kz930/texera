@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.{JsonSubTypes, JsonTypeInfo}
 import com.typesafe.scalalogging.LazyLogging
 import jakarta.annotation.security.RolesAllowed
 import jakarta.ws.rs.core.MediaType
-import jakarta.ws.rs.{Consumes, POST, Path, Produces}
+import jakarta.ws.rs.{Consumes, POST, Path, Produces, QueryParam}
 import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.{OperatorIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow.{PortIdentity, WorkflowContext}
@@ -59,7 +59,8 @@ class WorkflowToPythonResource extends LazyLogging {
   @POST
   @Path("")
   def convertWorkflowToPython(
-      logicalPlanPojo: LogicalPlanPojo
+      logicalPlanPojo: LogicalPlanPojo,
+      @QueryParam("helpersFromPackage") helpersFromPackage: Boolean
   ): WorkflowToPythonResponse = {
     try {
       val logicalPlan = LogicalPlan(logicalPlanPojo)
@@ -69,7 +70,8 @@ class WorkflowToPythonResource extends LazyLogging {
       // typed and the CSV reader quietly dropped the timestamp columns it would have
       // parsed. And a downstream operator that renders a column as text needs the type the
       // column was DECLARED as, which the file it reads cannot carry.
-      val pythonCode = translator.translate(logicalPlan, outputSchemasOf(logicalPlanPojo))
+      val pythonCode =
+        translator.translate(logicalPlan, outputSchemasOf(logicalPlanPojo), helpersFromPackage)
       WorkflowToPythonSuccess(pythonCode)
     } catch {
       case e: Exception =>

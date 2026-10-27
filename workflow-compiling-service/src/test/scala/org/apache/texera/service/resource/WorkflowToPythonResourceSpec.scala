@@ -83,9 +83,10 @@ class WorkflowToPythonResourceSpec extends AnyFlatSpec with BeforeAndAfterAll {
     objectMapper.writeValueAsString(jsonNode)
   }
 
-  private def postExport(pojo: LogicalPlanPojo): Response =
+  private def postExport(pojo: LogicalPlanPojo, helpersFromPackage: Boolean = false): Response =
     resources
       .target("/workflow-to-python")
+      .queryParam("helpersFromPackage", helpersFromPackage)
       .request(MediaType.APPLICATION_JSON)
       .post(Entity.json(encodePojoAsFrontendJson(pojo)))
 
@@ -168,6 +169,17 @@ class WorkflowToPythonResourceSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assert(code.contains("import pandas as pd"))
     assert(code.contains("_texera_key_codes"))
     assert(code.contains("head(5)"))
+  }
+
+  it should "import the helpers from texera-support when asked to" in {
+    val response = postExport(chainOf(distinctOp("distinct"), limitOp("limit", 5)), true)
+    val parsed = objectMapper.readValue(
+      response.readEntity(classOf[String]),
+      classOf[WorkflowToPythonResponse]
+    )
+    val code = parsed.asInstanceOf[WorkflowToPythonSuccess].pythonCode
+    assert(code.contains("from texera_support import _texera_key_codes"))
+    assert(!code.contains("def _texera_key_codes"))
   }
 
   it should "return a failure body rather than HTTP 500 when the plan cannot be read" in {

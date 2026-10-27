@@ -24,7 +24,7 @@ import org.apache.texera.amber.core.tuple.Schema
 import org.apache.texera.amber.core.virtualidentity.OperatorIdentity
 import org.apache.texera.amber.core.workflow.PortIdentity
 import org.apache.texera.common.compiler.model.LogicalPlan
-import org.apache.texera.amber.operator.StandaloneCodeGenerator
+import org.apache.texera.amber.operator.{StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 
 import java.util.regex.Matcher
@@ -44,10 +44,14 @@ class WorkflowToPythonTranslator extends LazyLogging {
     *                      reports it. Folded into input-port schemas for the
     *                      generators that need a column's declared type, which the
     *                      file the script reads cannot carry. Empty is allowed.
+    * @param helpersFromPackage import the helpers the `texera-support` package
+    *                      holds rather than defining them in the script. A helper
+    *                      the package lacks is still defined inline.
     */
   def translate(
       logicalPlan: LogicalPlan,
-      outputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]] = Map.empty
+      outputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]] = Map.empty,
+      helpersFromPackage: Boolean = false
   ): String = {
     // Track downstream connections per (opId, fromPortIdx). A port is a leaf
     // if it has no outgoing edges — operator-level "no outgoing links" is too
@@ -238,10 +242,32 @@ class WorkflowToPythonTranslator extends LazyLogging {
 
     // One blank line between helpers, as each block spaces its own, and two
     // around the helpers as a whole.
-    val called = calledHelpers(helpers, script.drop(helpersAt).mkString("\n"))
+    val body = script.drop(helpersAt).mkString("\n")
+    val inlined =
+      if (helpersFromPackage) helpers.filterNot(StandaloneHelpers.packaged.contains) else helpers
+    val called = calledHelpers(inlined, body)
     if (called.nonEmpty) script.insertAll(helpersAt, Seq("", called.mkString("\n\n"), "", ""))
+    // Named one by one: a leading underscore keeps a name out of `import *`.
+    val imported = if (helpersFromPackage) packagedNamesIn(body +: called) else Seq.empty
+    if (imported.nonEmpty)
+      script.insert(helpersAt - 1, s"from texera_support import ${imported.mkString(", ")}")
     script.mkString("\n")
   }
+
+  // What the package defines at its top level, which is only functions and classes.
+  private val packagedNames: Set[String] = StandaloneHelpers.packaged
+    .flatMap(_.split("\n"))
+    .flatMap(line => """(?:def|class) (\w+)""".r.findPrefixMatchOf(line).map(_.group(1)))
+    .toSet
+
+  // The packaged names the given code refers to, read from code only, sorted.
+  private def packagedNamesIn(texts: Seq[String]): Seq[String] =
+    texts
+      .flatMap(splitOffLiterals(_).collect { case (true, segment) => segment })
+      .flatMap("""\b\w+""".r.findAllIn(_))
+      .filter(packagedNames)
+      .distinct
+      .sorted
 
   // The helpers with only the definitions the script calls, directly or through
   // another helper. A helper block serves several operators, so it can hold far
