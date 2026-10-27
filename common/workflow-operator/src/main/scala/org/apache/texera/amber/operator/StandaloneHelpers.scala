@@ -19,6 +19,11 @@
 
 package org.apache.texera.amber.operator
 
+import org.apache.texera.amber.operator.aggregate.AggregateOpDesc
+import org.apache.texera.amber.operator.filter.SpecializedFilterOpDesc
+import org.apache.texera.amber.operator.source.scan.file.FileScanOpDesc
+import org.apache.texera.amber.operator.source.scan.json.JSONLScanSourceOpDesc
+
 /** Python definitions shared by several operators' standalone code, emitted
   * once per script via [[StandaloneCodeGenerator.standaloneHelpers]].
   */
@@ -371,4 +376,26 @@ object StandaloneHelpers {
       |        name=s.name,
       |        dtype=object,
       |    )""".stripMargin
+
+  /** Every shared helper block, in the order the `texera-support` package holds them.
+    * A new block returned by some [[StandaloneCodeGenerator.standaloneHelpers]] belongs
+    * here too, or the package lacks it.
+    */
+  def packaged: Seq[String] =
+    Seq(
+      AttributeCasts,
+      SamplingHelpers.JavaRandom,
+      AggregateOpDesc.Helpers,
+      SpecializedFilterOpDesc.FilterPredicates,
+      FileScanOpDesc.DecodeHelper,
+      JSONLScanSourceOpDesc.JsonFlatten,
+      JSONLScanSourceOpDesc.JsonText,
+      StandaloneCodeGenerator.PythonOperatorInput.definition
+    )
+
+  /** `texera_support/__init__.py` below its licence header: the packaged blocks under the
+    * one import they share.
+    */
+  def packageModule: String =
+    ("import pandas as pd" +: packaged).mkString("", "\n\n\n", "\n")
 }
