@@ -83,10 +83,9 @@ class WorkflowToPythonResourceSpec extends AnyFlatSpec with BeforeAndAfterAll {
     objectMapper.writeValueAsString(jsonNode)
   }
 
-  private def postExport(pojo: LogicalPlanPojo, helpersFromPackage: Boolean = false): Response =
+  private def postExport(pojo: LogicalPlanPojo): Response =
     resources
       .target("/workflow-to-python")
-      .queryParam("helpersFromPackage", helpersFromPackage)
       .request(MediaType.APPLICATION_JSON)
       .post(Entity.json(encodePojoAsFrontendJson(pojo)))
 
@@ -171,8 +170,8 @@ class WorkflowToPythonResourceSpec extends AnyFlatSpec with BeforeAndAfterAll {
     assert(code.contains("head(5)"))
   }
 
-  it should "import the helpers from texera-support when asked to" in {
-    val response = postExport(chainOf(distinctOp("distinct"), limitOp("limit", 5)), true)
+  it should "import the helpers from texera-support" in {
+    val response = postExport(chainOf(distinctOp("distinct"), limitOp("limit", 5)))
     val parsed = objectMapper.readValue(
       response.readEntity(classOf[String]),
       classOf[WorkflowToPythonResponse]

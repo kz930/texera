@@ -761,25 +761,6 @@ describe("MenuComponent", () => {
       expect(validSubgraph).not.toHaveBeenCalled();
       expect(convert).toHaveBeenCalled();
       expect(convert.mock.calls[0][0].operators).toHaveLength(1);
-      expect(convert.mock.calls[0][1]).toBe(false);
-    });
-
-    it("translates the same plan again with the package helpers when the switch turns on", () => {
-      const convert = vi
-        .spyOn(component["workflowToPythonService"], "convertToPython")
-        .mockReturnValueOnce(of({ type: "success", pythonCode: "inline" } as any))
-        .mockReturnValueOnce(of({ type: "success", pythonCode: "imported" } as any));
-      const create = vi.spyOn(component["modalService"], "create").mockReturnValue({} as any);
-      workflowActionService.addOperator(mockScanPredicate, mockPoint);
-      validationStream$.next({ errors: {}, workflowEmpty: false });
-
-      component.onClickExportAsPython();
-      component.onToggleHelpersFromPackage(true);
-
-      expect(convert.mock.calls[1][0]).toBe(convert.mock.calls[0][0]);
-      expect(convert.mock.calls[1][1]).toBe(true);
-      expect(component.pythonCodeForModal).toBe("imported");
-      expect(create).toHaveBeenCalledTimes(1);
     });
   });
 

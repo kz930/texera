@@ -27,7 +27,7 @@ import { ExecuteWorkflowService } from "../../service/execute-workflow/execute-w
 import { UndoRedoService } from "../../service/undo-redo/undo-redo.service";
 import { ValidationWorkflowService } from "../../service/validation/validation-workflow.service";
 import { WorkflowActionService } from "../../service/workflow-graph/model/workflow-action.service";
-import { ExecutionState, LogicalPlan } from "../../types/execute-workflow.interface";
+import { ExecutionState } from "../../types/execute-workflow.interface";
 import { HeatmapView } from "../../service/heatmap/heatmap-scoring";
 import { loadPersistedHeatmapView, savePersistedHeatmapView } from "../../service/heatmap/heatmap-overlay-persistence";
 import { WorkflowWebsocketService } from "../../service/workflow-websocket/workflow-websocket.service";
@@ -756,10 +756,6 @@ export class MenuComponent implements OnInit, OnDestroy {
 
   public isTranslatingToPython = false;
   public pythonCodeForModal = "";
-  /** Whether the script in the modal imports its helpers from `texera-support`. */
-  public helpersFromPackage = false;
-  // The plan the open modal shows, so the switch translates the same one again.
-  private pythonExportPlan?: LogicalPlan;
 
   public onClickExportAsPython(): void {
     // Exporting the valid part of the graph answers a workflow with a required
@@ -772,36 +768,23 @@ export class MenuComponent implements OnInit, OnDestroy {
     }
 
     // The whole graph, now that it is known to be whole.
-    this.pythonExportPlan = ExecuteWorkflowService.getLogicalPlanRequest(this.workflowActionService.getTexeraGraph());
-    this.translateToPython(true);
-  }
+    const logicalPlan = ExecuteWorkflowService.getLogicalPlanRequest(this.workflowActionService.getTexeraGraph());
 
-  public onToggleHelpersFromPackage(fromPackage: boolean): void {
-    this.helpersFromPackage = fromPackage;
-    this.translateToPython(false);
-  }
-
-  private translateToPython(openModal: boolean): void {
-    if (!this.pythonExportPlan) {
-      return;
-    }
     this.isTranslatingToPython = true;
     this.workflowToPythonService
-      .convertToPython(this.pythonExportPlan, this.helpersFromPackage)
+      .convertToPython(logicalPlan)
       .pipe(untilDestroyed(this))
       .subscribe({
         next: response => {
           this.isTranslatingToPython = false;
           if (response.type === "success") {
             this.pythonCodeForModal = response.pythonCode ?? "";
-            if (openModal) {
-              this.modalService.create({
-                nzTitle: "Workflow as Python Script",
-                nzContent: this.workflowPythonScriptModal ?? "",
-                nzFooter: null,
-                nzWidth: 800,
-              });
-            }
+            this.modalService.create({
+              nzTitle: "Workflow as Python Script",
+              nzContent: this.workflowPythonScriptModal ?? "",
+              nzFooter: null,
+              nzWidth: 800,
+            });
           } else {
             this.notificationService.error(response.errorMessage ?? "Failed to translate workflow to Python.");
           }

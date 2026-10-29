@@ -37,14 +37,7 @@ export interface WorkflowToPythonResponse {
 export class WorkflowToPythonService {
   constructor(private httpClient: HttpClient) {}
 
-  /**
-   * @param helpersFromPackage import the helpers from the `texera-support` package
-   *                           rather than defining them in the script.
-   */
-  public convertToPython(
-    logicalPlan: LogicalPlan,
-    helpersFromPackage: boolean = false
-  ): Observable<WorkflowToPythonResponse> {
+  public convertToPython(logicalPlan: LogicalPlan): Observable<WorkflowToPythonResponse> {
     const body = {
       operators: logicalPlan.operators,
       links: logicalPlan.links,
@@ -59,7 +52,6 @@ export class WorkflowToPythonService {
         headers: new HttpHeaders({
           "Content-Type": "application/json",
         }),
-        params: { helpersFromPackage },
       }
     );
   }
