@@ -34,26 +34,14 @@ class StandaloneHelpersSpec extends AnyFlatSpec with Matchers {
     .resolve("texera_support")
     .resolve("__init__.py")
 
-  // The file's leading comment lines and the blank line after them.
-  private def licenceHeader(text: String): String = {
-    val lines = text.linesWithSeparators.toSeq
-    val header = lines.takeWhile(_.startsWith("#"))
-    (header ++ lines.drop(header.length).takeWhile(_.trim.isEmpty)).mkString
-  }
-
   // With TEXERA_SUPPORT_WRITE set, the module is rewritten instead of checked.
   "texera_support/__init__.py" should "hold exactly the helpers the operators declare" in {
-    val text = new String(Files.readAllBytes(module), StandardCharsets.UTF_8)
-    val header = licenceHeader(text)
     if (sys.env.contains("TEXERA_SUPPORT_WRITE")) {
-      Files.write(
-        module,
-        (header + StandaloneHelpers.packageModule).getBytes(StandardCharsets.UTF_8)
-      )
+      Files.write(module, StandaloneHelpers.packageModule.getBytes(StandardCharsets.UTF_8))
     }
     withClue(s"$module is stale; rerun this spec with TEXERA_SUPPORT_WRITE=1 to rewrite it.\n") {
-      new String(Files.readAllBytes(module), StandardCharsets.UTF_8)
-        .drop(header.length) shouldBe StandaloneHelpers.packageModule
+      new String(Files.readAllBytes(module), StandardCharsets.UTF_8) shouldBe
+        StandaloneHelpers.packageModule
     }
   }
 }
