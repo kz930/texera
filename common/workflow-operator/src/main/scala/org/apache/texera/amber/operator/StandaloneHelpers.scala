@@ -379,7 +379,8 @@ object StandaloneHelpers {
 
   /** Every shared helper block, in the order the `texera-support` package holds them.
     * A new block returned by some [[StandaloneCodeGenerator.standaloneHelpers]] belongs
-    * here too, or the package lacks it.
+    * here too: an exported script imports its helpers, and the translator refuses a
+    * block this list lacks.
     */
   def packaged: Seq[String] =
     Seq(

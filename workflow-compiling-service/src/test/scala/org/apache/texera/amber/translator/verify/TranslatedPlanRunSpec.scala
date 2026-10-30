@@ -111,8 +111,11 @@ class TranslatedPlanRunSpec extends AnyFlatSpec with Matchers {
 
     val out = ArrayBuffer.empty[String]
     val err = ArrayBuffer.empty[String]
-    val exit = Process(Seq(python, scriptPath.toString), Some(dir.toFile))
-      .!(ProcessLogger(line => out += line, line => err += line))
+    val exit = Process(
+      Seq(python, scriptPath.toString),
+      Some(dir.toFile),
+      StandaloneRunner.SupportEnv.toSeq: _*
+    ).!(ProcessLogger(line => out += line, line => err += line))
     val stdout = out.mkString("\n")
     withClue(
       s"script: $scriptPath\n--- stdout ---\n$stdout\n--- stderr ---\n${err.mkString("\n")}\n"

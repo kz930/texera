@@ -22,7 +22,7 @@ package org.apache.texera.amber.translator.verify
 import com.typesafe.scalalogging.LazyLogging
 import org.apache.texera.amber.core.tuple.{AttributeType, Schema}
 import org.apache.texera.amber.core.workflow.PortIdentity
-import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator}
+import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.util.python.PythonWorkerPool
 
 import java.nio.charset.StandardCharsets
@@ -48,6 +48,18 @@ object StandaloneRunner extends LazyLogging {
     * referenced by name from py_op_driver's comment.
     */
   private[verify] val VerifySeed: Int = 20260811
+
+  /** Where a translated script finds the `texera_support` it imports: the
+    * package's own directory in this checkout, so nothing has to be installed.
+    */
+  private[verify] val SupportEnv: Map[String, String] = Map(
+    "PYTHONPATH" -> Path
+      .of(sys.env.getOrElse("TEXERA_HOME", "."))
+      .resolve("texera-support")
+      .toAbsolutePath
+      .normalize
+      .toString
+  )
 
   /**
     * @param outputs paths to the per-port output JSONL files. Empty map iff
@@ -182,7 +194,7 @@ object StandaloneRunner extends LazyLogging {
         val req = org.apache.texera.amber.util.JSONUtils.objectMapper.createObjectNode()
         req.put("scriptPath", scriptPath.toString)
         req.put("workDir", workDir.toString)
-        val o = PythonWorkerPool.run(WorkerResourcePath, Seq.empty, pythonExe, req)
+        val o = PythonWorkerPool.run(WorkerResourcePath, Seq.empty, pythonExe, req, SupportEnv)
         return (o.exit, o.stdout, o.stderr)
       } catch {
         case e: PythonWorkerPool.WorkerDiedException =>
@@ -211,7 +223,9 @@ object StandaloneRunner extends LazyLogging {
     // cwd = workDir so generated code using *relative* paths (e.g. CSVScan's
     // basename-stripped `pd.read_csv("sample.csv")`) resolves against workDir.
     // Absolute paths written by the prologue/epilogue are unaffected.
-    val exit = Process(Seq(pythonExe, scriptPath.toString), Some(workDir.toFile)).!(logger)
+    val exit =
+      Process(Seq(pythonExe, scriptPath.toString), Some(workDir.toFile), SupportEnv.toSeq: _*)
+        .!(logger)
     (exit, outBuf.mkString("\n"), errBuf.mkString("\n"))
   }
 
@@ -594,7 +608,13 @@ object StandaloneRunner extends LazyLogging {
     // Body verbatim — placeholders left in place.
     // Emitted ahead of the body the way the translator does, so an operator that
     // declares a helper is exercised here exactly as it runs in a real script.
+    // Every block must also be in the package, which is what an export imports;
+    // this sweep reaches every operator, so it is where a missing one shows.
     helpers.foreach { helper =>
+      require(
+        StandaloneHelpers.packaged.contains(helper),
+        s"A helper is missing from StandaloneHelpers.packaged:\n${helper.take(200)}"
+      )
       sb.append(helper)
       if (!helper.endsWith("\n")) sb.append('\n')
       sb.append('\n')

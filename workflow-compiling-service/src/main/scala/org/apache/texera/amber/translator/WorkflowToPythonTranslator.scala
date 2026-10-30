@@ -44,14 +44,10 @@ class WorkflowToPythonTranslator extends LazyLogging {
     *                      reports it. Folded into input-port schemas for the
     *                      generators that need a column's declared type, which the
     *                      file the script reads cannot carry. Empty is allowed.
-    * @param helpersFromPackage import the helpers the `texera-support` package
-    *                      holds rather than defining them in the script. A helper
-    *                      the package lacks is still defined inline.
     */
   def translate(
       logicalPlan: LogicalPlan,
-      outputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]] = Map.empty,
-      helpersFromPackage: Boolean = false
+      outputSchemas: Map[OperatorIdentity, Map[PortIdentity, Option[Schema]]] = Map.empty
   ): String = {
     // Track downstream connections per (opId, fromPortIdx). A port is a leaf
     // if it has no outgoing edges — operator-level "no outgoing links" is too
@@ -105,19 +101,24 @@ class WorkflowToPythonTranslator extends LazyLogging {
       .foreach(script += _)
     script += ""
 
-    // Helper definitions the operator bodies below refer to. Collected across the
-    // whole plan and deduplicated by text, so a workflow holding two operators
-    // that share one helper still emits it once. Order follows the topological
-    // order, which keeps the script stable for a given plan. They go in once the
-    // bodies are written, since which of them the script calls is only known then.
-    val helpers = topoOrder
+    // The helpers the operator bodies below refer to come from the texera-support
+    // package, which the script imports. A block the package does not hold would
+    // leave the script calling a name it cannot find, so it stops the export here.
+    topoOrder
       .map(logicalPlan.getOperator)
       .collect {
         case gen: StandaloneCodeGenerator =>
           gen.standaloneHelpers() ++ gen.standaloneInputAdapter().map(_.definition)
       }
       .flatten
-      .distinct
+      .find(!StandaloneHelpers.packaged.contains(_))
+      .foreach { block =>
+        throw new IllegalStateException(
+          s"A helper is missing from StandaloneHelpers.packaged:\n${block.take(200)}"
+        )
+      }
+    // The import goes in once the bodies are written, since which helpers the
+    // script calls is only known then.
     val helpersAt = script.length
 
     for (opIdentity <- topoOrder) {
@@ -240,15 +241,8 @@ class WorkflowToPythonTranslator extends LazyLogging {
         }
     }
 
-    // One blank line between helpers, as each block spaces its own, and two
-    // around the helpers as a whole.
-    val body = script.drop(helpersAt).mkString("\n")
-    val inlined =
-      if (helpersFromPackage) helpers.filterNot(StandaloneHelpers.packaged.contains) else helpers
-    val called = calledHelpers(inlined, body)
-    if (called.nonEmpty) script.insertAll(helpersAt, Seq("", called.mkString("\n\n"), "", ""))
     // Named one by one: a leading underscore keeps a name out of `import *`.
-    val imported = if (helpersFromPackage) packagedNamesIn(body +: called) else Seq.empty
+    val imported = packagedNamesIn(script.drop(helpersAt).mkString("\n"))
     if (imported.nonEmpty)
       script.insert(helpersAt - 1, s"from texera_support import ${imported.mkString(", ")}")
     script.mkString("\n")
@@ -261,61 +255,13 @@ class WorkflowToPythonTranslator extends LazyLogging {
     .toSet
 
   // The packaged names the given code refers to, read from code only, sorted.
-  private def packagedNamesIn(texts: Seq[String]): Seq[String] =
-    texts
-      .flatMap(splitOffLiterals(_).collect { case (true, segment) => segment })
+  private def packagedNamesIn(code: String): Seq[String] =
+    splitOffLiterals(code)
+      .collect { case (true, segment) => segment }
       .flatMap("""\b\w+""".r.findAllIn(_))
       .filter(packagedNames)
       .distinct
       .sorted
-
-  // The helpers with only the definitions the script calls, directly or through
-  // another helper. A helper block serves several operators, so it can hold far
-  // more functions than one plan uses, and those would only be text for the
-  // reader to wade through. Only a top-level `def _texera_...` is ever dropped:
-  // anything else a block holds is kept, and what it calls counts as called. A
-  // name is read from code only, so a comment or a string naming a helper keeps
-  // nothing alive. A block left with nothing is dropped whole.
-  private def calledHelpers(helpers: Seq[String], body: String): Seq[String] = {
-    val blocks = helpers.map(topLevelUnits)
-    val defined = blocks.flatten.collect { case (Some(name), text) => name -> text }.toMap
-    val called = mutable.Set[String]()
-    def visit(text: String): Unit = {
-      val code = splitOffLiterals(text).collect { case (true, segment) => segment }
-      """\b_texera_\w+""".r.findAllIn(code.mkString("\n")).foreach { name =>
-        if (defined.contains(name) && called.add(name)) visit(defined(name))
-      }
-    }
-    visit(body)
-    blocks.flatten.collect { case (None, text) => text }.foreach(visit)
-    blocks
-      .map(_.collect { case (name, text) if name.forall(called) => text }.mkString)
-      .map(_.replaceAll("\\s+$", ""))
-      .filter(_.nonEmpty)
-  }
-
-  // A helper block cut at its top-level statements, each with the comment and
-  // blank lines just above it and the indented lines below it, and named when it
-  // is a `def _texera_...`.
-  private def topLevelUnits(block: String): List[(Option[String], String)] = {
-    val units = ArrayBuffer[(Option[String], StringBuilder)]()
-    val lead = new StringBuilder
-    block.split("\n", -1).foreach { line =>
-      val topLevel = line.nonEmpty && !line.head.isWhitespace
-      if (topLevel && !line.startsWith("#") && !line.startsWith("@")) {
-        val name = """def (_texera_\w+)\s*\(""".r.findPrefixMatchOf(line).map(_.group(1))
-        units += ((name, new StringBuilder(lead.toString)))
-        lead.setLength(0)
-        units.last._2 ++= line + "\n"
-      } else if (topLevel || units.isEmpty || lead.nonEmpty) {
-        lead ++= line + "\n"
-      } else {
-        units.last._2 ++= line + "\n"
-      }
-    }
-    val cut = units.map { case (name, text) => (name, text.toString) }.toList
-    if (lead.isEmpty) cut else cut :+ ((None, lead.toString))
-  }
 
   // The stem of the files one operator writes, taken from its name so a reader
   // can tell whose picture is whose. Numbered from one even when the plan holds

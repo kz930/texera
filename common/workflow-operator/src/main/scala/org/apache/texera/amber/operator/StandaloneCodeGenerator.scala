@@ -114,14 +114,9 @@ trait StandaloneCodeGenerator {
   def producesDataFrame(): Boolean = true
 
   /**
-    * Definitions this operator's standalone code depends on, emitted once near
-    * the top of the script rather than inline.
-    *
-    * The translator concatenates operator bodies into a single module, so an
-    * operator needing a helper class has nowhere to put it that another operator
-    * would not duplicate. Helpers returned here are collected across the whole
-    * plan and deduplicated by their text, so two sampling operators in one
-    * workflow yield one copy of the generator they share.
+    * Definitions this operator's standalone code depends on. Each block must be
+    * one of [[StandaloneHelpers.packaged]]: the exported script imports the names
+    * it calls from the `texera-support` package rather than defining them.
     */
   def standaloneHelpers(): Seq[String] = Seq.empty
 
@@ -141,7 +136,7 @@ trait StandaloneCodeGenerator {
   /**
     * A helper each input frame goes through before this operator's code runs,
     * for an operator the engine hands its table in a different form than the
-    * script's upstream does. The translator defines it once and feeds the
+    * script's upstream does. The script imports it once and feeds the
     * operator what it returns, leaving the upstream frame as it was.
     *
     * A Python operator runs in pyamber, which hands it a DOUBLE column as

@@ -69,11 +69,7 @@ class WorkflowToPythonResource extends LazyLogging {
       // typed and the CSV reader quietly dropped the timestamp columns it would have
       // parsed. And a downstream operator that renders a column as text needs the type the
       // column was DECLARED as, which the file it reads cannot carry.
-      val pythonCode = translator.translate(
-        logicalPlan,
-        outputSchemasOf(logicalPlanPojo),
-        helpersFromPackage = true
-      )
+      val pythonCode = translator.translate(logicalPlan, outputSchemasOf(logicalPlanPojo))
       WorkflowToPythonSuccess(pythonCode)
     } catch {
       case e: Exception =>
