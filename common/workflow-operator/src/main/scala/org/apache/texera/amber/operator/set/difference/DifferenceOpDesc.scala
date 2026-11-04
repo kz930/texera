@@ -17,15 +17,16 @@
  * under the License.
  */
 
-package org.apache.texera.amber.operator.intersect
+package org.apache.texera.amber.operator.set.difference
 
+import com.google.common.base.Preconditions
 import org.apache.texera.amber.core.executor.OpExecWithClassName
 import org.apache.texera.amber.core.virtualidentity.{ExecutionIdentity, WorkflowIdentity}
 import org.apache.texera.amber.core.workflow._
 import org.apache.texera.amber.operator.metadata.{OperatorGroupConstants, OperatorInfo}
 import org.apache.texera.amber.operator.{LogicalOp, StandaloneCodeGenerator, StandaloneHelpers}
 
-class IntersectOpDesc extends LogicalOp with StandaloneCodeGenerator {
+class DifferenceOpDesc extends LogicalOp with StandaloneCodeGenerator {
   override def getPhysicalOp(
       workflowId: WorkflowIdentity,
       executionId: ExecutionIdentity
@@ -35,28 +36,36 @@ class IntersectOpDesc extends LogicalOp with StandaloneCodeGenerator {
         workflowId,
         executionId,
         operatorIdentifier,
-        OpExecWithClassName("org.apache.texera.amber.operator.intersect.IntersectOpExec")
+        OpExecWithClassName("org.apache.texera.amber.operator.set.difference.DifferenceOpExec")
       )
       .withInputPorts(operatorInfo.inputPorts)
       .withOutputPorts(operatorInfo.outputPorts)
       .withPartitionRequirement(List(Option(HashPartition()), Option(HashPartition())))
       .withDerivePartition(_ => HashPartition())
+      .withPropagateSchema(SchemaPropagationFunc(inputSchemas => {
+        Preconditions.checkArgument(inputSchemas.values.toSet.size == 1)
+        val outputSchema = inputSchemas.values.head
+        operatorInfo.outputPorts.map(port => port.id -> outputSchema).toMap
+      }))
   }
 
   override def operatorInfo: OperatorInfo =
     OperatorInfo(
-      "Intersect",
-      "Take the intersect of two inputs",
+      "Difference",
+      "find the set difference of two inputs",
       OperatorGroupConstants.SET_GROUP,
-      inputPorts = List(InputPort(PortIdentity()), InputPort(PortIdentity(1))),
+      inputPorts = List(
+        InputPort(PortIdentity(), displayName = "left"),
+        InputPort(PortIdentity(1), displayName = "right")
+      ),
       outputPorts = List(OutputPort(blocking = true))
     )
 
-  // Distinct left rows the right also holds, by the engine's row equality, which
-  // `_texera_key_codes` with `signed` numbers.
+  // Distinct left (port 0) rows the right (port 1) does not hold, by the
+  // engine's row equality, which `_texera_key_codes` with `signed` numbers.
   override def generateStandaloneCode(): String =
     """_texera_set_left, _texera_set_right = _texera_key_codes(in1df, in2df, signed=True)
-      |_texera_set_kept = ~_texera_set_left.duplicated() & _texera_set_left.isin(_texera_set_right)
+      |_texera_set_kept = ~_texera_set_left.duplicated() & ~_texera_set_left.isin(_texera_set_right)
       |out1df = in1df[_texera_set_kept.to_numpy()].reset_index(drop=True)""".stripMargin
 
   override def standaloneHelpers(): Seq[String] = Seq(StandaloneHelpers.AttributeCasts)

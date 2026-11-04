@@ -17,7 +17,7 @@
  * under the License.
  */
 
-package org.apache.texera.amber.operator.difference
+package org.apache.texera.amber.operator.set.difference
 
 import com.typesafe.config.ConfigFactory
 import org.apache.texera.amber.core.executor.OpExecWithClassName
@@ -86,7 +86,7 @@ class DifferenceOpDescSpec extends AnyFlatSpec with Matchers {
     val physical = (new DifferenceOpDesc).getPhysicalOp(workflowId, executionId)
     physical.opExecInitInfo match {
       case OpExecWithClassName(className, _) =>
-        className shouldBe "org.apache.texera.amber.operator.difference.DifferenceOpExec"
+        className shouldBe "org.apache.texera.amber.operator.set.difference.DifferenceOpExec"
       case other =>
         fail(s"expected OpExecWithClassName, got $other")
     }
