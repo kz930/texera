@@ -107,10 +107,27 @@ class BinningOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerato
   private val labelSuffix: String =
     """.astype("string").astype("object").where(lambda s: s.notna(), None)"""
 
+  /** pandas builds the edges in float64, which cannot count by one past 2**53, so a
+    * narrow range of large integers collapses into duplicate edges. An integer
+    * column is cut as its distance from the value nearest zero, which float64 holds
+    * exactly and which cannot overflow, and that value is added back to the labels
+    * in exact decimal arithmetic. Only where the plain cut raises or loses a bin,
+    * so every other column keeps the labels pandas gives it.
+    */
+  private val integerShift: String =
+    """int(min(max(0, _binned.min()), _binned.max())) if pd.api.types.is_integer_dtype(_binned) else 0"""
+
+  private val shiftedLabel: String =
+    """lambda i: "(%s, %s]" % (_low + Decimal(str(i.left)), _low + Decimal(str(i.right)))"""
+
+  override def standaloneImports(): Seq[String] = Seq("from decimal import Decimal")
+
   override def generatePythonCode(): String = {
     val cut = cutName
     val args = cutArgs
     val suffix = labelSuffix
+    val shift = integerShift
+    val label = shiftedLabel
     // The result column is named in PYTHON rather than here: joining it to
     // `attribute` in Scala would hand `pyb` a plain string, and the value it was
     // built to protect would be spliced into the template unguarded.
@@ -123,6 +140,7 @@ class BinningOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerato
     // `notna()` counts as a value there but the cut still cannot place.
     pyb"""from pytexera import *
        |import pandas as pd
+       |from decimal import Decimal
        |
        |class ProcessTableOperator(UDFTableOperator):
        |
@@ -132,7 +150,16 @@ class BinningOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerato
        |        _column = $attribute
        |        _binned = out[_column]
        |        if _binned.astype("float64").notna().any():
-       |            _binned = ${cut}(_binned, ${args})
+       |            _low = ${shift}
+       |            _shifted = ${cut}(_binned - _low, ${args})
+       |            try:
+       |                _plain = ${cut}(_binned, ${args})
+       |            except ValueError:
+       |                _plain = None
+       |            if _plain is not None and len(_plain.cat.categories) == len(_shifted.cat.categories):
+       |                _binned = _plain
+       |            else:
+       |                _binned = _shifted.cat.rename_categories(${label})
        |        out[_column + "_bin"] = _binned${suffix}
        |        yield out""".encode
   }
@@ -143,7 +170,16 @@ class BinningOpDesc extends PythonOperatorDescriptor with StandaloneCodeGenerato
     s"""out1df = in1df.copy()
        |_binned = out1df[$column]
        |if _binned.astype("float64").notna().any():
-       |    _binned = $cutName(_binned, $cutArgs)
+       |    _low = $integerShift
+       |    _shifted = $cutName(_binned - _low, $cutArgs)
+       |    try:
+       |        _plain = $cutName(_binned, $cutArgs)
+       |    except ValueError:
+       |        _plain = None
+       |    if _plain is not None and len(_plain.cat.categories) == len(_shifted.cat.categories):
+       |        _binned = _plain
+       |    else:
+       |        _binned = _shifted.cat.rename_categories($shiftedLabel)
        |out1df[$result] = _binned$labelSuffix""".stripMargin
   }
 }
