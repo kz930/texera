@@ -17,10 +17,10 @@
  * under the License.
  */
 
-import { ChangeDetectorRef, Component, EventEmitter, Input, OnChanges, Output, SimpleChanges } from "@angular/core";
+import { ChangeDetectorRef, Component, Input, OnChanges, OnInit, SimpleChanges } from "@angular/core";
 import { NgFor, NgIf } from "@angular/common";
-import { NzIconDirective } from "ng-zorro-antd/icon";
 import { Subscription } from "rxjs";
+import { filter } from "rxjs/operators";
 import { UntilDestroy, untilDestroyed } from "@ngneat/until-destroy";
 import { WorkflowActionService } from "../../../service/workflow-graph/model/workflow-action.service";
 import { WorkflowResultService } from "../../../service/workflow-result/workflow-result.service";
@@ -62,13 +62,10 @@ export interface OperatorResultPreview {
   selector: "texera-operator-result-preview",
   templateUrl: "./operator-result-preview.component.html",
   styleUrls: ["./operator-result-preview.component.scss"],
-  imports: [NgIf, NgFor, NzIconDirective],
+  imports: [NgIf, NgFor],
 })
-export class OperatorResultPreviewComponent implements OnChanges {
+export class OperatorResultPreviewComponent implements OnInit, OnChanges {
   @Input() operatorId = "";
-  // whether the card offers to pin the result next to the operator
-  @Input() pinnable = false;
-  @Output() pin = new EventEmitter<void>();
 
   // The first rows of a table result, one string per shown column; undefined while they load.
   rows: readonly (readonly string[])[] | undefined = undefined;
@@ -83,20 +80,32 @@ export class OperatorResultPreviewComponent implements OnChanges {
     private changeDetectorRef: ChangeDetectorRef
   ) {}
 
+  ngOnInit(): void {
+    // A running operator's rows keep coming after the card opens, so fetch again until it has a full preview.
+    this.workflowResultService
+      .getResultUpdateStream()
+      .pipe(
+        filter(update => this.operatorId in update && (this.rows?.length ?? 0) < PREVIEW_ROW_LIMIT),
+        untilDestroyed(this)
+      )
+      .subscribe(() => this.loadRows(true));
+  }
+
   ngOnChanges(changes: SimpleChanges): void {
     if (changes["operatorId"]) {
       this.loadRows();
     }
   }
 
-  private loadRows(): void {
+  /** A refresh keeps the rows on show until the new ones come, so the card does not flash "Loading". */
+  private loadRows(refresh = false): void {
     this.rowsSubscription?.unsubscribe();
     const paginated = this.workflowResultService.getPaginatedResultService(this.operatorId);
     if (!paginated || paginated.getCurrentTotalNumTuples() === 0) {
       this.rows = [];
       return;
     }
-    this.rows = undefined;
+    if (!refresh) this.rows = undefined;
     const columns = this.outputColumns(this.operatorId).slice(0, PREVIEW_COLUMN_LIMIT);
     // Replaced when another operator is hovered, and dropped with the preview when the pointer leaves.
     this.rowsSubscription = paginated

@@ -248,6 +248,11 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
         "The selected item is a folder or does not exist. Please select an actual .jsonl file from the 'File' dropdown."
       )
     }
+    // A window of no rows is still a window on this file, and the file's columns
+    // do not depend on how many of its rows were asked for. Reading the sample
+    // through the limit left a Limit of 0 nothing to infer from, and the operator
+    // declared a schema of no columns at all.
+    val sampleSize = windowLimit.filter(_ > 0).getOrElse(INFER_READ_LIMIT).min(INFER_READ_LIMIT)
 
     def readSample(startOffset: Int): ArrayBuffer[Map[String, String]] = {
       val stream = DocumentFactory.openReadonlyDocument(uri).asInputStream()
@@ -257,7 +262,7 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
         .lines()
         .iterator()
         .asScala
-        .slice(startOffset, startOffset + inferSampleSize)
+        .slice(startOffset, startOffset + sampleSize)
         .foreach(line => {
           val root: JsonNode = objectMapper.readTree(line)
           if (root.isObject) {
@@ -268,7 +273,7 @@ class JSONLScanSourceOpDesc extends ScanSourceOpDesc with StandaloneCodeGenerato
       sample
     }
 
-    // An offset past the last line leaves the window no rows to infer from, so the
+    // An offset past the last line empties the window the same way, so the
     // sample falls back to the top of the file, which is where CSV always reads it.
     val windowSample = readSample(windowOffset)
     val allFields =

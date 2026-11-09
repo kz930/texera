@@ -52,11 +52,10 @@ import concaveman from "concaveman";
 import { OperatorResultSummary, AgentService } from "../../service/agent/agent.service";
 import { NzNoAnimationDirective } from "ng-zorro-antd/core/animation";
 import { ContextMenuComponent } from "./context-menu/context-menu/context-menu.component";
-import { NgFor, NgIf } from "@angular/common";
+import { NgIf } from "@angular/common";
 import { AgentInteractionComponent } from "../agent/agent-interaction/agent-interaction.component";
 import { HeatmapLegendComponent } from "../heatmap-legend/heatmap-legend.component";
 import { OperatorResultPreviewComponent } from "./operator-result-preview/operator-result-preview.component";
-import { PinnedResultWindowComponent } from "./pinned-result-window/pinned-result-window.component";
 import { JupyterPanelService } from "../../service/jupyter-panel/jupyter-panel.service";
 
 // jointjs interactive options for enabling and disabling interactivity
@@ -84,8 +83,6 @@ export const MAIN_CANVAS = {
 export const RESULT_PREVIEW_DELAY_MS = 500;
 /** How long the card stays after the pointer leaves, so the pointer can move into it. */
 export const RESULT_PREVIEW_HIDE_MS = 200;
-/** The height of a pinned window's header, where the line from its operator comes in. */
-const PINNED_HEADER_HEIGHT = 30;
 
 /** Whether a mouse button is down. JointJS hands over a jQuery event, which keeps the DOM one inside. */
 function isButtonHeld(evt: unknown): boolean {
@@ -119,8 +116,6 @@ function isButtonHeld(evt: unknown): boolean {
     AgentInteractionComponent,
     HeatmapLegendComponent,
     OperatorResultPreviewComponent,
-    PinnedResultWindowComponent,
-    NgFor,
   ],
 })
 export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -139,9 +134,9 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   } | null = null;
   // The hovered operator's result preview, and where to show it. Null when hidden.
   public resultPreview: { operatorId: string; x: number; y: number } | null = null;
-  // Results pinned beside their operators, each with how far it was dragged from its spot.
-  public pinnedResults: { operatorId: string; dx: number; dy: number }[] = [];
   private previewShowTimer?: ReturnType<typeof setTimeout>;
+  // The operator previewShowTimer opens the card for.
+  private previewPendingOperatorId?: string;
   private previewHideTimer?: ReturnType<typeof setTimeout>;
   private paperInteractive: boolean = true;
   // Keeps the paper sized to its OWN container (not just the window) and rebuilds cell geometry
@@ -295,6 +290,9 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
   ngOnDestroy(): void {
     this.paperResizeObserver?.disconnect();
+    // A card timer left running would reach for the removed paper and this destroyed view.
+    clearTimeout(this.previewShowTimer);
+    clearTimeout(this.previewHideTimer);
     // The paper is bound to the joint graph, which is root-provided and outlives this component,
     // so an undisposed one goes on listening to that graph from a DOM node no longer on the page.
     // Harmless while every mount followed a page load; the switch between a workflow's two views
@@ -616,9 +614,8 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   }
 
   /**
-   * Shows the hovered operator's result preview beside it; its Pin button keeps the whole result
-   * there. Off when Layers > Result preview is unchecked, and while the heat-map overlay is on,
-   * whose own tooltip answers the hover then.
+   * Shows the hovered operator's result preview beside it. Off when Layers > Result preview is
+   * unchecked, and while the heat-map overlay is on, whose own tooltip answers the hover then.
    */
   private handleResultPreviewHover(): void {
     fromJointPaperEvent(this.paper, "element:mouseenter")
@@ -631,14 +628,11 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         }
         const operatorId = elementView.model.id.toString();
         // no preview while a button is held: the pointer is dragging an operator or a link
-        if (
-          !this.workflowActionService.getTexeraGraph().hasOperator(operatorId) ||
-          isButtonHeld(evt) ||
-          this.pinnedResults.some(pinned => pinned.operatorId === operatorId)
-        ) {
+        if (!this.workflowActionService.getTexeraGraph().hasOperator(operatorId) || isButtonHeld(evt)) {
           return;
         }
         // Only a pointer that rests on the operator opens the card, so passing over one does not.
+        this.previewPendingOperatorId = operatorId;
         this.previewShowTimer = setTimeout(() => {
           this.resultPreview = { operatorId, ...this.operatorAnchor(operatorId) };
           // JointJS paper events fire outside Angular's zone (see handleHeatmapHover).
@@ -653,8 +647,9 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         this.hideResultPreviewSoon();
       });
 
-    // A click or a drag on the canvas closes the card at once.
-    merge(fromJointPaperEvent(this.paper, "element:pointerdown"), fromJointPaperEvent(this.paper, "blank:pointerdown"))
+    // A click or a drag on the canvas closes the card at once. A native capture listener, because
+    // pressing a port to drag a link stops JointJS before it emits element:pointerdown.
+    fromEvent(this.paper.el, "pointerdown", { capture: true })
       .pipe(untilDestroyed(this))
       .subscribe(() => {
         clearTimeout(this.previewShowTimer);
@@ -663,22 +658,17 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
         this.changeDetectorRef.detectChanges();
       });
 
-    // Pinned windows sit beside their operators, so they move when an operator or the canvas does.
-    merge(
-      fromJointPaperEvent(this.paper, "translate"),
-      fromJointPaperEvent(this.paper, "scale"),
-      fromEvent(this.paper.model as any, "change:position")
-    )
-      .pipe(untilDestroyed(this))
-      .subscribe(() => {
-        if (this.pinnedResults.length > 0) this.changeDetectorRef.detectChanges();
-      });
-
+    // A deleted operator takes its card along, and a card still waiting to open for it.
     this.workflowActionService
       .getTexeraGraph()
       .getOperatorDeleteStream()
       .pipe(untilDestroyed(this))
-      .subscribe(({ deletedOperatorID }) => this.unpinResult(deletedOperatorID));
+      .subscribe(({ deletedOperatorID }) => {
+        if (this.previewPendingOperatorId === deletedOperatorID) clearTimeout(this.previewShowTimer);
+        if (this.resultPreview?.operatorId !== deletedOperatorID) return;
+        this.resultPreview = null;
+        this.changeDetectorRef.detectChanges();
+      });
   }
 
   /** Close the card after a moment, so the pointer can cross from the operator into it. */
@@ -693,85 +683,6 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
   /** The pointer reached the card, so it stays open. */
   public keepResultPreview(): void {
     clearTimeout(this.previewHideTimer);
-  }
-
-  public pinResultPreview(): void {
-    if (this.resultPreview === null) return;
-    this.pinResult(this.resultPreview.operatorId);
-  }
-
-  /** Pins an operator's result window. The right-click menu calls this too, so it works with the hover card off. */
-  public pinResult(operatorId: string): void {
-    if (!this.pinnedResults.some(pinned => pinned.operatorId === operatorId)) {
-      this.pinnedResults = [...this.pinnedResults, { operatorId, dx: 0, dy: 0 }];
-    }
-    this.resultPreview = null;
-  }
-
-  public unpinResult(operatorId: string): void {
-    this.pinnedResults = this.pinnedResults.filter(pinned => pinned.operatorId !== operatorId);
-    this.changeDetectorRef.detectChanges();
-  }
-
-  // A window is its operator's, so a move keeps the window being dragged instead of rebuilding it.
-  public trackPinnedResult(_index: number, pinned: { operatorId: string }): string {
-    return pinned.operatorId;
-  }
-
-  public movePinnedResult(operatorId: string, delta: { dx: number; dy: number }): void {
-    this.pinnedResults = this.pinnedResults.map(pinned =>
-      pinned.operatorId === operatorId ? { ...pinned, dx: pinned.dx + delta.dx, dy: pinned.dy + delta.dy } : pinned
-    );
-  }
-
-  /** Where a pinned window goes: beside its operator, plus however far it was dragged from there. */
-  public pinnedResultPosition(pinned: { operatorId: string; dx: number; dy: number }): { x: number; y: number } {
-    const anchor = this.operatorAnchor(pinned.operatorId);
-    return { x: anchor.x + pinned.dx, y: anchor.y + pinned.dy };
-  }
-
-  /**
-   * The line from an operator to its pinned window, a curve like the links between operators.
-   * Beside the operator, it runs side to side into the window's header; above or below, it runs
-   * from the operator's top or bottom to the window's nearest edge.
-   */
-  public pinnedConnectorPath(pinned: { operatorId: string; dx: number; dy: number }): string {
-    const cell = this.paper.getModelById(pinned.operatorId);
-    if (!cell) return "";
-    const bbox = cell.getBBox();
-    const scale = this.paper.scale();
-    const translate = this.paper.translate();
-    const op = {
-      left: bbox.x * scale.sx + translate.tx,
-      right: (bbox.x + bbox.width) * scale.sx + translate.tx,
-      top: bbox.y * scale.sy + translate.ty,
-      bottom: (bbox.y + bbox.height) * scale.sy + translate.ty,
-    };
-    const midX = (op.left + op.right) / 2;
-    const midY = (op.top + op.bottom) / 2;
-
-    const corner = this.pinnedResultPosition(pinned);
-    const size = this.pinnedWindowSize(pinned.operatorId);
-    const win = { left: corner.x, right: corner.x + size.width, top: corner.y, bottom: corner.y + size.height };
-    const headerY = win.top + PINNED_HEADER_HEIGHT / 2;
-
-    const curve = (x1: number, y1: number, x2: number, y2: number, horizontal: boolean) => {
-      const bend = Math.max(30, (horizontal ? Math.abs(x2 - x1) : Math.abs(y2 - y1)) / 2);
-      const [bx, by] = horizontal ? [Math.sign(x2 - x1) * bend, 0] : [0, Math.sign(y2 - y1) * bend];
-      return `M ${x1} ${y1} C ${x1 + bx} ${y1 + by}, ${x2 - bx} ${y2 - by}, ${x2} ${y2}`;
-    };
-    if (win.left >= op.right) return curve(op.right, midY, win.left, headerY, true);
-    if (win.right <= op.left) return curve(op.left, midY, win.right, headerY, true);
-    // the window overlaps the operator's column: join the facing edges, at the point under the operator
-    const x = Math.min(Math.max(midX, win.left + 12), win.right - 12);
-    return win.top >= op.bottom ? curve(midX, op.bottom, x, win.top, false) : curve(midX, op.top, x, win.bottom, false);
-  }
-
-  /** A pinned window's size as drawn: the user can resize it, so it is read from the page. */
-  private pinnedWindowSize(operatorId: string): { width: number; height: number } {
-    const host = this.elementRef.nativeElement as HTMLElement;
-    const box = host.querySelector<HTMLElement>(`[data-operator-id="${operatorId}"] .pinned-result`);
-    return { width: box?.offsetWidth ?? 0, height: box?.offsetHeight ?? 0 };
   }
 
   /** Just right of the operator's box, level with its top, in the editor's coordinates. */

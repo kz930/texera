@@ -396,7 +396,57 @@ describe("WorkflowEditorComponent", () => {
       expect(fixture.debugElement.query(By.css("texera-operator-result-preview"))).toBeNull();
     }));
 
-    it("leaves the hover to the heat-map tooltip while that overlay is on", () => {
+    it("closes the card, and cancels a pending one, when an output port is pressed to drag a link", fakeAsync(() => {
+      addLinkedPair();
+      const view = component.paper.findViewByModel(mockScanPredicate.operatorID);
+      const outputPort = view.el.querySelector("[port-group='out']")!;
+
+      component.paper.trigger("element:mouseenter", view, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS);
+      expect(component.resultPreview).not.toBeNull();
+      outputPort.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      expect(component.resultPreview).toBeNull();
+
+      component.paper.trigger("element:mouseenter", view, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS - 1);
+      outputPort.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      tick(1);
+      expect(component.resultPreview).toBeNull();
+    }));
+
+    it("closes the card, and cancels a pending one, when its operator is deleted, but not for another", fakeAsync(() => {
+      addLinkedPair();
+      const workflowActionService = TestBed.inject(WorkflowActionService);
+      const scanView = component.paper.findViewByModel(mockScanPredicate.operatorID);
+      const resultView = component.paper.findViewByModel(mockResultPredicate.operatorID);
+
+      component.paper.trigger("element:mouseenter", scanView, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS);
+      workflowActionService.deleteOperator(mockResultPredicate.operatorID);
+      expect(component.resultPreview?.operatorId).toBe(mockScanPredicate.operatorID);
+      workflowActionService.deleteOperator(mockScanPredicate.operatorID);
+      expect(component.resultPreview).toBeNull();
+
+      workflowActionService.addOperator(mockResultPredicate, mockPoint);
+      component.paper.trigger("element:mouseenter", resultView, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS - 1);
+      workflowActionService.deleteOperator(mockResultPredicate.operatorID);
+      tick(1);
+      expect(component.resultPreview).toBeNull();
+    }));
+
+    it("opens no card once the editor is destroyed", fakeAsync(() => {
+      addLinkedPair();
+      const view = component.paper.findViewByModel(mockScanPredicate.operatorID);
+
+      component.paper.trigger("element:mouseenter", view, new MouseEvent("mouseenter"));
+      fixture.destroy();
+      tick(RESULT_PREVIEW_DELAY_MS);
+
+      expect(component.resultPreview).toBeNull();
+    }));
+
+    it("leaves the hover to the heat-map tooltip while that overlay is on", fakeAsync(() => {
       addLinkedPair();
       vi.spyOn(TestBed.inject(WorkflowActionService).getJointGraphWrapper(), "getHeatmapView").mockReturnValue(
         "throughput" as any
@@ -404,57 +454,23 @@ describe("WorkflowEditorComponent", () => {
       const view = component.paper.findViewByModel(mockScanPredicate.operatorID);
 
       component.paper.trigger("element:mouseenter", view, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS);
 
       expect(component.resultPreview).toBeNull();
-    });
+    }));
 
-    /** Right-click with the scan operator selected and pick "pin result" from the menu. */
-    function pinScanFromContextMenu(): void {
-      TestBed.inject(WorkflowActionService).getJointGraphWrapper().highlightOperators(mockScanPredicate.operatorID);
-      fixture.detectChanges();
-      const menu = fixture.debugElement.query(By.directive(NzDropdownMenuComponent)).componentInstance;
-      component.nzContextMenu.create(new MouseEvent("contextmenu", { clientX: 5, clientY: 5 }), menu);
-      fixture.detectChanges();
-      const item = fixture.debugElement
-        .queryAll(By.css("texera-context-menu li[nz-menu-item]"))
-        .find(li => li.nativeElement.textContent.trim() === "pin result");
-      expect(item).toBeTruthy();
-      item!.triggerEventHandler("click", null);
-      fixture.detectChanges();
-      component.nzContextMenu.close();
-    }
-
-    // With the hover card off there is no Pin button, so the right-click menu is the way to a result window.
-    it("pins an operator's result from the right-click menu while Result preview is off", () => {
-      const wrapper = TestBed.inject(WorkflowActionService).getJointGraphWrapper();
-      wrapper.setResultPreviewEnabled(false);
-      try {
-        addLinkedPair();
-
-        pinScanFromContextMenu();
-        pinScanFromContextMenu();
-
-        // pinning the same operator twice keeps one window
-        expect(component.pinnedResults.map(pinned => pinned.operatorId)).toEqual([mockScanPredicate.operatorID]);
-        const windows = fixture.debugElement.queryAll(By.css("texera-pinned-result-window"));
-        expect(windows.length).toBe(1);
-        expect(windows[0].nativeElement.getAttribute("data-operator-id")).toBe(mockScanPredicate.operatorID);
-      } finally {
-        wrapper.setResultPreviewEnabled(true);
-      }
-    });
-
-    it("pins an operator's result from the right-click menu while the heat-map is on", () => {
+    it("opens no card while Layers > Result preview is off", fakeAsync(() => {
       addLinkedPair();
-      vi.spyOn(TestBed.inject(WorkflowActionService).getJointGraphWrapper(), "getHeatmapView").mockReturnValue(
-        "throughput" as any
+      vi.spyOn(TestBed.inject(WorkflowActionService).getJointGraphWrapper(), "isResultPreviewEnabled").mockReturnValue(
+        false
       );
+      const view = component.paper.findViewByModel(mockScanPredicate.operatorID);
 
-      pinScanFromContextMenu();
+      component.paper.trigger("element:mouseenter", view, new MouseEvent("mouseenter"));
+      tick(RESULT_PREVIEW_DELAY_MS);
 
-      expect(component.pinnedResults.map(pinned => pinned.operatorId)).toEqual([mockScanPredicate.operatorID]);
-      expect(fixture.debugElement.query(By.css("texera-pinned-result-window"))).toBeTruthy();
-    });
+      expect(component.resultPreview).toBeNull();
+    }));
 
     /** Select the scan operator the way a click does and return its model, whose attrs say what is on show. */
     function selectScanOperator(): joint.dia.Cell {
