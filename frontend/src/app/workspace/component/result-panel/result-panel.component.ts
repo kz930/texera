@@ -29,6 +29,8 @@ import { calculateTotalTranslate3d } from "../../../common/util/panel-dock";
 import { isDefined } from "../../../common/util/predicate";
 import { CdkDragEnd, CdkDrag, CdkDragHandle } from "@angular/cdk/drag-drop";
 import { PanelService } from "../../service/panel/panel.service";
+import { ExecuteWorkflowService } from "../../service/execute-workflow/execute-workflow.service";
+import { ExecutionState } from "../../types/execute-workflow.interface";
 import { NzMenuDirective, NzMenuItemComponent, NzMenuDividerDirective } from "ng-zorro-antd/menu";
 import { NgClass, NgIf } from "@angular/common";
 import { ɵNzTransitionPatchDirective } from "ng-zorro-antd/core/transition-patch";
@@ -36,6 +38,10 @@ import { NzTooltipDirective } from "ng-zorro-antd/tooltip";
 import { NzIconDirective } from "ng-zorro-antd/icon";
 import { NzSpaceCompactItemDirective } from "ng-zorro-antd/space";
 import { NzButtonComponent } from "ng-zorro-antd/button";
+import { NzTabsComponent, NzTabComponent } from "ng-zorro-antd/tabs";
+import { AiFixFrameComponent } from "./ai-fix/ai-fix-frame.component";
+import { GuiConfigService } from "../../../common/service/gui-config.service";
+import { WorkflowConsoleService } from "../../service/workflow-console/workflow-console.service";
 
 export const DEFAULT_WIDTH = 800;
 export const DEFAULT_HEIGHT = 500;
@@ -65,6 +71,9 @@ export const DEFAULT_HEIGHT = 500;
     CdkDragHandle,
     ConsoleFrameComponent,
     NzResizeHandlesComponent,
+    NzTabsComponent,
+    NzTabComponent,
+    AiFixFrameComponent,
   ],
 })
 export class ResultPanelComponent implements OnInit, OnDestroy {
@@ -82,12 +91,17 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
   currentOperatorId?: string;
   // a Python UDF takes debugger commands, so its console has an input
   consoleInputEnabled = false;
+  // the operator the AI Fix tab offers to fix; none hides the tab
+  aiFixOperatorId?: string;
 
   constructor(
     private workflowActionService: WorkflowActionService,
     private changeDetectorRef: ChangeDetectorRef,
     private resizeService: PanelResizeService,
-    private panelService: PanelService
+    private panelService: PanelService,
+    private workflowConsoleService: WorkflowConsoleService,
+    private executeWorkflowService: ExecuteWorkflowService,
+    private config: GuiConfigService
   ) {
     this.width = 0;
     this.height = Number(localStorage.getItem("result-panel-height")) || this.height;
@@ -102,17 +116,12 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
     this.returnPosition = { x: -xOffset, y: -yOffset };
     this.updateReturnPosition(DEFAULT_HEIGHT, this.height);
     this.registerFollowHighlight();
+    this.registerSelectPythonUdfOnRun();
+    this.registerAiFixTab();
     this.panelService.closePanelStream.pipe(untilDestroyed(this)).subscribe(() => this.closePanel());
     this.panelService.resetPanelStream.pipe(untilDestroyed(this)).subscribe(() => {
       this.resetPanelPosition();
       this.openPanel();
-    });
-    this.workflowActionService.resultPanelOpen$.pipe(untilDestroyed(this)).subscribe(open => {
-      if (open) {
-        this.openPanel();
-      } else {
-        this.closePanel();
-      }
     });
     // Once, for what is already there: the highlight is kept in a root-provided service, so after a
     // hand-over between a workflow's two views an operator can already be shown selected.
@@ -142,6 +151,26 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
       });
   }
 
+  /** A run selects the first Python UDF, so the console shows its messages and takes debugger commands. */
+  registerSelectPythonUdfOnRun() {
+    this.executeWorkflowService
+      .getExecutionStateStream()
+      .pipe(untilDestroyed(this))
+      .subscribe(event => {
+        if (event.current.state !== ExecutionState.Running) return;
+        const pythonUdfs = this.workflowActionService
+          .getTexeraGraph()
+          .getAllOperators()
+          .filter(op => isPythonUdf(op) && !op.isDisabled)
+          .map(op => op.operatorID);
+        const wrapper = this.workflowActionService.getJointGraphWrapper();
+        const highlighted = wrapper.getCurrentHighlightedOperatorIDs();
+        if (pythonUdfs.length === 0 || (highlighted.length === 1 && pythonUdfs.includes(highlighted[0]))) return;
+        wrapper.unhighlightOperators(...highlighted);
+        wrapper.highlightOperators(pythonUdfs[0]);
+      });
+  }
+
   /** One highlighted operator narrows the console to it. None, or several, shows every operator. */
   updateShownOperator(): void {
     const highlighted = this.workflowActionService.getJointGraphWrapper().getCurrentHighlightedOperatorIDs();
@@ -149,6 +178,40 @@ export class ResultPanelComponent implements OnInit, OnDestroy {
     this.currentOperatorId = highlighted.length === 1 && graph.hasOperator(highlighted[0]) ? highlighted[0] : undefined;
     this.consoleInputEnabled =
       isDefined(this.currentOperatorId) && isPythonUdf(graph.getOperator(this.currentOperatorId));
+    this.updateAiFixTab();
+  }
+
+  /**
+   * A Python UDF that raises while it is already selected moves no highlight: the run stays
+   * Running and the traceback arrives as an ERROR console message. A new run clears the console
+   * without a console update, so the run's state is watched too.
+   */
+  registerAiFixTab() {
+    merge(
+      this.workflowConsoleService.getConsoleMessageUpdateStream(),
+      this.executeWorkflowService.getExecutionStateStream()
+    )
+      .pipe(untilDestroyed(this))
+      .subscribe(() => {
+        if (this.updateAiFixTab()) this.changeDetectorRef.detectChanges();
+      });
+  }
+
+  /**
+   * The AI Fix tab is offered on the selected Python UDF while its console has an error, as the fix
+   * it writes is a change to the operator's code. Returns whether the tab changed.
+   */
+  private updateAiFixTab(): boolean {
+    const operatorId = this.currentOperatorId;
+    const offered =
+      this.config.env.copilotEnabled &&
+      isDefined(operatorId) &&
+      this.consoleInputEnabled &&
+      (this.workflowConsoleService.getConsoleMessages(operatorId) ?? []).some(m => m.msgType.name === "ERROR");
+    const next = offered ? operatorId : undefined;
+    if (next === this.aiFixOperatorId) return false;
+    this.aiFixOperatorId = next;
+    return true;
   }
 
   openPanel() {
