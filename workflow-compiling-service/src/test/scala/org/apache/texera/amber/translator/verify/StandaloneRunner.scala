@@ -49,6 +49,21 @@ object StandaloneRunner extends LazyLogging {
     */
   private[verify] val VerifySeed: Int = 20260811
 
+  /** Where a translated script finds the `texera_helpers` it imports: the module's
+    * own directory in this checkout, found by walking up from the test's working
+    * directory, so nothing has to be copied beside the script.
+    */
+  private[verify] lazy val HelpersEnv: Map[String, String] = {
+    val start = Path.of(".").toAbsolutePath.normalize
+    val dir = Iterator
+      .iterate(start)(_.getParent)
+      .takeWhile(_ != null)
+      .map(_.resolve("texera-helpers"))
+      .find(Files.isDirectory(_))
+      .getOrElse(throw new IllegalStateException(s"no texera-helpers above $start"))
+    Map("PYTHONPATH" -> dir.toString)
+  }
+
   /**
     * @param outputs paths to the per-port output JSONL files. Empty map iff
     *                the operator's `producesDataFrame()` returned false
@@ -182,7 +197,7 @@ object StandaloneRunner extends LazyLogging {
         val req = org.apache.texera.amber.util.JSONUtils.objectMapper.createObjectNode()
         req.put("scriptPath", scriptPath.toString)
         req.put("workDir", workDir.toString)
-        val o = PythonWorkerPool.run(WorkerResourcePath, Seq.empty, pythonExe, req)
+        val o = PythonWorkerPool.run(WorkerResourcePath, Seq.empty, pythonExe, req, HelpersEnv)
         return (o.exit, o.stdout, o.stderr)
       } catch {
         case e: PythonWorkerPool.WorkerDiedException =>
@@ -211,7 +226,9 @@ object StandaloneRunner extends LazyLogging {
     // cwd = workDir so generated code using *relative* paths (e.g. CSVScan's
     // basename-stripped `pd.read_csv("sample.csv")`) resolves against workDir.
     // Absolute paths written by the prologue/epilogue are unaffected.
-    val exit = Process(Seq(pythonExe, scriptPath.toString), Some(workDir.toFile)).!(logger)
+    val exit =
+      Process(Seq(pythonExe, scriptPath.toString), Some(workDir.toFile), HelpersEnv.toSeq: _*)
+        .!(logger)
     (exit, outBuf.mkString("\n"), errBuf.mkString("\n"))
   }
 
