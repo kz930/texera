@@ -642,54 +642,6 @@ describe("WorkflowEditorComponent", () => {
       });
     });
 
-    /** Right-click with the scan operator selected and pick "pin result" from the menu. */
-    function pinScanFromContextMenu(): void {
-      TestBed.inject(WorkflowActionService).getJointGraphWrapper().highlightOperators(mockScanPredicate.operatorID);
-      fixture.detectChanges();
-      const menu = fixture.debugElement.query(By.directive(NzDropdownMenuComponent)).componentInstance;
-      component.nzContextMenu.create(new MouseEvent("contextmenu", { clientX: 5, clientY: 5 }), menu);
-      fixture.detectChanges();
-      const item = fixture.debugElement
-        .queryAll(By.css("texera-context-menu li[nz-menu-item]"))
-        .find(li => li.nativeElement.textContent.trim() === "pin result");
-      expect(item).toBeTruthy();
-      item!.triggerEventHandler("click", null);
-      fixture.detectChanges();
-      component.nzContextMenu.close();
-    }
-
-    // With the hover card off there is no Pin button, so the right-click menu is the way to a result window.
-    it("pins an operator's result from the right-click menu while Result preview is off", () => {
-      const wrapper = TestBed.inject(WorkflowActionService).getJointGraphWrapper();
-      wrapper.setResultPreviewEnabled(false);
-      try {
-        addLinkedPair();
-
-        pinScanFromContextMenu();
-        pinScanFromContextMenu();
-
-        // pinning the same operator twice keeps one window
-        expect(component.pinnedResults.map(pinned => pinned.operatorId)).toEqual([mockScanPredicate.operatorID]);
-        const windows = fixture.debugElement.queryAll(By.css("texera-pinned-result-window"));
-        expect(windows.length).toBe(1);
-        expect(windows[0].nativeElement.getAttribute("data-operator-id")).toBe(mockScanPredicate.operatorID);
-      } finally {
-        wrapper.setResultPreviewEnabled(true);
-      }
-    });
-
-    it("pins an operator's result from the right-click menu while the heat-map is on", () => {
-      addLinkedPair();
-      vi.spyOn(TestBed.inject(WorkflowActionService).getJointGraphWrapper(), "getHeatmapView").mockReturnValue(
-        "throughput" as any
-      );
-
-      pinScanFromContextMenu();
-
-      expect(component.pinnedResults.map(pinned => pinned.operatorId)).toEqual([mockScanPredicate.operatorID]);
-      expect(fixture.debugElement.query(By.css("texera-pinned-result-window"))).toBeTruthy();
-    });
-
     /** Select the scan operator the way a click does and return its model, whose attrs say what is on show. */
     function selectScanOperator(): joint.dia.Cell {
       addLinkedPair();
@@ -716,6 +668,25 @@ describe("WorkflowEditorComponent", () => {
       expect(model.attr(".chat-button/visibility")).toBe("hidden");
       expect(model.attr(".add-input-port-button/visibility")).toBe("hidden");
       expect(model.attr(".texera-operator-state/visibility")).toBe("visible");
+    });
+
+    // The selection lives in the wrapper, which both views of a workflow share and hand over
+    // between them, while this paper is new on every switch: a paper that only followed the
+    // highlight stream left the step the other view had selected drawn as not selected, beside a
+    // panel showing it. The highlight handler is re-run here, which is what a new paper wiring
+    // itself into the same shared selection comes down to.
+    it("rings the operators the shared selection already holds when the paper wires itself up", () => {
+      const workflowActionService = TestBed.inject(WorkflowActionService);
+      workflowActionService.addOperator(mockScanPredicate, mockPoint);
+      workflowActionService.getJointGraphWrapper().highlightOperators(mockScanPredicate.operatorID);
+      const view = component.paper.findViewByModel(mockScanPredicate.operatorID);
+      // Installed after the stream has done its work, so only the wiring-up pass is counted.
+      const highlight = vi.spyOn(view, "highlight");
+
+      (component as unknown as { handleElementHightlightEvent: () => void }).handleElementHightlightEvent();
+
+      expect(highlight).toHaveBeenCalledTimes(1);
+      expect(highlight).toHaveBeenCalledWith("rect.body", expect.anything());
     });
   });
 
@@ -2364,18 +2335,18 @@ describe("WorkflowEditorComponent editor wiring", () => {
   });
 
   describe("selection and highlight handlers", () => {
-    it("pins an operator's result window when it is double-clicked, but not for a link", () => {
+    it("opens the result panel when an operator is double-clicked, but not for a link", () => {
       const { view: linkView } = addLinkedPair();
-      const pinned = () => component.pinnedResults.map(pinnedResult => pinnedResult.operatorId);
+      const opened: boolean[] = [];
+      workflowActionService.resultPanelOpen$.subscribe(value => opened.push(value));
       const operatorView = component.paper.findViewByModel(mockScanPredicate.operatorID);
 
       (component.paper as any).trigger("cell:pointerdblclick", operatorView, { shiftKey: false });
-      expect(pinned()).toEqual([mockScanPredicate.operatorID]);
-      expect(fixture.debugElement.queryAll(By.css("texera-pinned-result-window")).length).toBe(1);
+      expect(opened).toEqual([true]);
 
       // a link is not an element, so the handler skips it entirely
       (component.paper as any).trigger("cell:pointerdblclick", linkView, { shiftKey: false });
-      expect(pinned()).toEqual([mockScanPredicate.operatorID]);
+      expect(opened).toEqual([true]);
     });
 
     it("highlights the link running between two shift-selected operators", () => {

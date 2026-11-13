@@ -710,14 +710,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
   public pinResultPreview(): void {
     if (this.resultPreview === null) return;
-    this.pinResult(this.resultPreview.operatorId);
-  }
-
-  /** Pins an operator's result window. The right-click menu calls this too, so it works with the hover card off. */
-  public pinResult(operatorId: string): void {
-    if (!this.pinnedResults.some(pinned => pinned.operatorId === operatorId)) {
-      this.pinnedResults = [...this.pinnedResults, { operatorId, dx: 0, dy: 0 }];
-    }
+    this.pinnedResults = [...this.pinnedResults, { operatorId: this.resultPreview.operatorId, dx: 0, dy: 0 }];
     this.resultPreview = null;
   }
 
@@ -1106,7 +1099,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
 
   private handleHighlightMouseDBClickInput(): void {
     // on user mouse double-clicks a comment box, open that comment box
-    // on user mouse double-clicks an operator, pin its result window
+    // on user mouse double-clicks an operator, highlight it and open result panel
     fromJointPaperEvent(this.paper, "cell:pointerdblclick")
       .pipe(untilDestroyed(this))
       .subscribe(event => {
@@ -1118,9 +1111,7 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
           if (this.workflowActionService.getTexeraGraph().hasCommentBox(elementID)) {
             this.openCommentBox(elementID);
           } else if (this.workflowActionService.getTexeraGraph().hasOperator(elementID)) {
-            this.pinResult(elementID);
-            // JointJS paper events fire outside Angular's zone (see handleHeatmapHover).
-            this.changeDetectorRef.detectChanges();
+            this.workflowActionService.openResultPanel();
           }
         }
       });
@@ -1222,14 +1213,21 @@ export class WorkflowEditorComponent implements OnInit, AfterViewInit, OnDestroy
       },
     };
 
+    const ring = (elementID: string) =>
+      this.paper.findViewByModel(elementID)?.highlight("rect.body", { highlighter: highlightOptions });
+
+    // The selection outlives this paper: it lives in the wrapper, which both views of a workflow
+    // share and hand over between them, while the paper is new on every switch. Ring what is
+    // selected now, or the view arriving at a selection would show its panel for a step drawn as
+    // not selected; then follow the changes.
+    [...this.wrapper.getCurrentHighlightedOperatorIDs(), ...this.wrapper.getCurrentHighlightedCommentBoxIDs()].forEach(
+      ring
+    );
+
     // highlight on OperatorHighlightStream or CommentBoxHighlightStream
     merge(this.wrapper.getJointOperatorHighlightStream(), this.wrapper.getJointCommentBoxHighlightStream())
       .pipe(untilDestroyed(this))
-      .subscribe(elementIDs =>
-        elementIDs.forEach(elementID => {
-          this.paper.findViewByModel(elementID).highlight("rect.body", { highlighter: highlightOptions });
-        })
-      );
+      .subscribe(elementIDs => elementIDs.forEach(ring));
 
     // unhighlight on OperatorUnhighlightStream or CommentBoxUnhighlightStream
     merge(this.wrapper.getJointOperatorUnhighlightStream(), this.wrapper.getJointCommentBoxUnhighlightStream())
