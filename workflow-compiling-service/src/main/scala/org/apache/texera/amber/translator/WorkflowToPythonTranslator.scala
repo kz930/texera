@@ -27,6 +27,7 @@ import org.apache.texera.common.compiler.model.LogicalPlan
 import org.apache.texera.amber.operator.{StandaloneCodeGenerator, StandaloneHelpers}
 import org.apache.texera.amber.pybuilder.PythonTemplateBuilder.pyStringLiteral
 
+import java.util.Locale
 import java.util.regex.Matcher
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
@@ -42,6 +43,38 @@ class WorkflowToPythonTranslator extends LazyLogging {
   // reads its sources from. A source offering one of these names would be
   // overwritten by it, so they count as taken before any source is named.
   private val archiveFileNames = Set("script.py", "texera_helpers.py")
+
+  /**
+    * The inputs the script reads under a name other than their own, as (own name,
+    * name the script reads), in plan order. A person saving the inputs next to the
+    * script has to save these under the second name.
+    */
+  def renamedSources(logicalPlan: LogicalPlan): Seq[(String, String)] =
+    namedSources(logicalPlan).values.filter { case (own, read) => own != read }.toSeq
+
+  // What each source's file is called in the directory the script runs from, as
+  // (the name it offers, the name it gets), keyed by its resolved path. A source
+  // offers the last segment of its resolved path, which is the name a person
+  // would give the file, but two sources reading different files can offer the
+  // same one — and did, leaving the script to read one of them twice and say
+  // nothing. The second gets a name of its own, for the same reason a chart's
+  // output file is numbered. Keyed by the resolved path, so one file read by two
+  // operators keeps one name.
+  private def namedSources(
+      logicalPlan: LogicalPlan
+  ): mutable.LinkedHashMap[String, (String, String)] = {
+    val named = mutable.LinkedHashMap[String, (String, String)]()
+    logicalPlan.getTopologicalOpIds.asScala.map(logicalPlan.getOperator).foreach {
+      case gen: StandaloneCodeGenerator =>
+        gen.standaloneSourcePath().filterNot(named.contains).foreach { path =>
+          val offered = gen.standaloneSourceName().getOrElse("")
+          named(path) =
+            (offered, distinctName(offered, named.values.map(_._2).toSet ++ archiveFileNames))
+        }
+      case _ => ()
+    }
+    named
+  }
 
   /**
     * @param outputSchemas what each operator's output ports carry, as
@@ -74,26 +107,8 @@ class WorkflowToPythonTranslator extends LazyLogging {
     // getTopologicalOpIds() uses jgrapht internally — no need for a custom topo sort
     val topoOrder = logicalPlan.getTopologicalOpIds.asScala.toList
 
-    // What each source's file is called in the directory the script runs from.
-    // A source offers the last segment of its resolved path, which is the name a
-    // person would give the file, but two sources reading different files can
-    // offer the same one — and did, leaving the script to read one of them twice
-    // and say nothing. The second gets a name of its own, for the same reason a
-    // chart's output file is numbered. Keyed by the resolved path, so one file
-    // read by two operators keeps one name.
-    val sourceFileNames = mutable.Map[String, String]()
-    topoOrder.map(logicalPlan.getOperator).foreach {
-      case gen: StandaloneCodeGenerator =>
-        gen.standaloneSourcePath().foreach { path =>
-          sourceFileNames.getOrElseUpdate(
-            path,
-            distinctName(
-              gen.standaloneSourceName().getOrElse(""),
-              sourceFileNames.values.toSet ++ archiveFileNames
-            )
-          )
-        }
-      case _ => ()
+    val sourceFileNames = namedSources(logicalPlan).map {
+      case (path, (_, name)) => path -> name
     }
 
     // pandas is the one module every generator uses: an operator body reads and
@@ -286,13 +301,16 @@ class WorkflowToPythonTranslator extends LazyLogging {
   // The offered name if no other source has taken it, otherwise the same name
   // numbered before its extension: data.csv, then data-2.csv. Numbering the stem
   // rather than appending keeps the suffix, which is what a reader opens the
-  // file by.
+  // file by. Names are compared ignoring case, since Windows and macOS treat
+  // Script.py and script.py as one file.
   private def distinctName(offered: String, taken: Set[String]): String = {
-    if (!taken.contains(offered)) return offered
+    val takenFolded = taken.map(_.toLowerCase(Locale.ROOT))
+    def free(name: String): Boolean = !takenFolded.contains(name.toLowerCase(Locale.ROOT))
+    if (free(offered)) return offered
     val dot = offered.lastIndexOf('.')
     val (stem, ext) =
       if (dot <= 0) (offered, "") else (offered.substring(0, dot), offered.substring(dot))
-    Iterator.from(2).map(n => s"$stem-$n$ext").find(!taken.contains(_)).get
+    Iterator.from(2).map(n => s"$stem-$n$ext").find(free).get
   }
 
   // Replaces in{N}df / out{N}df placeholders with concrete variable names.
@@ -321,7 +339,7 @@ class WorkflowToPythonTranslator extends LazyLogging {
       result = result.replaceAll("""\boutputJson\b""", "\"" + fileBase + ".json\"")
 
       // A source names the file it reads sourceFile and gets back the name
-      // assigned where sourceFileNames is built. Quoted through the escaper the
+      // assigned in namedSources. Quoted through the escaper the
       // operators use, and then quoted again for the replacement: a file name is
       // the user's text, so it can hold both a backslash and a `$`.
       result = result.replaceAll(
